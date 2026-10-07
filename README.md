@@ -19,9 +19,9 @@
 | --- | --- |
 | ID と あいことば でログイン | 参加者ID・あいことばの一括発行（CSV保存） |
 | 画面の文章を読んで声を登録（録音 or 音声ファイル） | 課題文の登録（1行1文で一括、言語は自動判定、グループ別配信） |
-| 録音の長さ・音量をその場でチェック | 生成状況の確認、試聴、再生成、失敗分の一括再生成 |
-| 課題文ごとにAI音声を再生（ゆっくり / ふつう） | 公開前の承認（任意） |
-| 自分の音読を録音してAI音声と聞き比べ（録音はブラウザ内だけで、送信しない） | 利用ログのCSV出力（ログイン・再生・練習） |
+| 録音の長さ・音量をその場でチェック | 生成状況の確認、試聴、再生成、失敗分の一括再生成、全部つくり直し |
+| 課題文ごとにAI音声を再生（速さ 0.5〜2.0倍のスライダー、1・3・5回・ずっと のくり返し） | 公開前の承認（任意） |
+| 自分の音読を録音してAI音声と聞き比べ（同じ速さ・くり返しで再生。録音はブラウザ内だけで、送信しない） | 利用ログのCSV出力（ログイン・再生・練習） |
 | | 参加者単位のデータ完全削除（録音・生成音声・ログ） |
 
 生成音声はアプリ内でのみ再生でき、ダウンロードボタンは表示しません。
@@ -71,6 +71,23 @@ python scripts/try_engine.py my_voice.wav "I like reading books." --lang en
 ```
 
 4. アプリを起動: `python -m app`
+5. それまで `dummy` で作った音声が残っている場合は、管理画面「生成音声」→「全部つくり直す」で XTTS-v2 の声に作り直します。
+
+### Windows の場合
+
+`source .venv/bin/activate` の代わりに、仮想環境の Python を直接呼びます（PowerShell、プロジェクトのフォルダで実行）。
+
+```powershell
+.venv\Scripts\python -m pip install -r requirements-xtts.txt
+notepad .env      # COQUI_TOS_AGREED=1 と ONDOKU_ENGINE=xtts にして保存
+.venv\Scripts\python scripts\try_engine.py data\references\P001.wav "きょうは いい てんき です。"
+.venv\Scripts\python -m app
+```
+
+- 声のサンプルには、アプリで登録した声（`data\references\<ID>.wav`）をそのまま使えます。
+- モデルは初回に `%LOCALAPPDATA%\tts` にダウンロードされます。
+- プロジェクトは OneDrive の外に置いてください（録音がクラウドに同期されるのを防ぐため）。
+- インストール中に「パスが長すぎる」というエラーが出た場合は、管理者 PowerShell で `New-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force` を実行して再起動してから、もう一度インストールしてください。
 
 GPT-SoVITS のような専用WebUIや個別の学習は不要で、声の登録（数秒〜数十秒）だけで生成できます。Mac では CPU で動かします（XTTS-v2 は Apple の MPS では不安定なため）。
 

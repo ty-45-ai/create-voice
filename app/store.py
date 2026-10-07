@@ -435,6 +435,13 @@ class Store:
                 (time.time(), cid),
             )
 
+    def requeue_all_clips(self) -> int:
+        with self.tx() as conn:
+            return conn.execute(
+                "UPDATE clips SET status='queued', approved=0, error=NULL, updated_at=? WHERE status != 'processing'",
+                (time.time(),),
+            ).rowcount
+
     def set_clip_approved(self, cid: int, approved: bool) -> None:
         with self.tx() as conn:
             conn.execute("UPDATE clips SET approved=? WHERE id=?", (int(approved), cid))

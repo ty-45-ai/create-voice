@@ -116,9 +116,16 @@ details.upload summary { cursor: pointer; }
 .status.wait { color: var(--muted); }
 .item .text { font-size: 1.3em; line-height: 1.8; margin: 10px 0 14px; }
 .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-.speed { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
-.speed button { border: none; border-radius: 0; padding: 10px 14px; }
-.speed button.on { background: var(--soft-blue); font-weight: 700; }
+.player-settings { display: flex; gap: 12px 28px; flex-wrap: wrap; margin-top: 14px; }
+.setting { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.setting-label { font-size: 0.85em; color: var(--muted); }
+.setting-label b { color: var(--text); font-variant-numeric: tabular-nums; margin-left: 4px; }
+.slider-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+input.rate { display: inline-block; width: 180px; margin: 0; padding: 0; border: none; background: none; accent-color: var(--primary); height: 32px; }
+button.small-btn { font-size: 0.75em; padding: 4px 10px; border-radius: 999px; }
+.repeat { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.repeat button { border: none; border-radius: 0; padding: 8px 12px; }
+.repeat button.on { background: var(--soft-blue); font-weight: 700; }
 .practice { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .self-rec.recording { background: var(--record); border-color: var(--record); color: #fff; }
 

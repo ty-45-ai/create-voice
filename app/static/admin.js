@@ -293,6 +293,14 @@ $("clip-retry-failed").addEventListener("click", async () => {
   loadStatus();
 });
 
+$("clip-regenerate-all").addEventListener("click", async () => {
+  if (!confirm("すべての生成音声をつくり直します（音声エンジンを切り替えたときなど）。よろしいですか？")) return;
+  const r = await api("/api/admin/clips/regenerate-all", { method: "POST" });
+  alert(`${r.count} 件をつくり直しの順番待ちに入れました。`);
+  loadClips();
+  loadStatus();
+});
+
 async function loadClips() {
   const params = new URLSearchParams();
   if ($("clip-participant").value) params.set("participant_id", $("clip-participant").value);

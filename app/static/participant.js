@@ -7,7 +7,7 @@ let pollTimer = null;
 let recorder = null;
 let recTimer = null;
 let pendingBlob = null;
-let currentAudio = null;
+let currentPlayer = null;
 
 function show(view) {
   views.forEach((v) => $(v).classList.toggle("hidden", v !== view));
@@ -224,10 +224,80 @@ const STATUS = {
 };
 
 function stopAudio() {
-  if (currentAudio) {
-    currentAudio.pause();
-    currentAudio = null;
+  if (currentPlayer) {
+    const p = currentPlayer;
+    currentPlayer = null;
+    p.stop();
   }
+}
+
+// Play `url` repeatedly with the card's settings, read live so a change to speed or
+// repeat count applies while playing. settings.repeat = 0 means "until stopped".
+// onState(state, round) with state: "playing" | "gap" | "done".
+function playRepeated(url, owner, settings, onState) {
+  stopAudio();
+  const audio = new Audio(url);
+  audio.preservesPitch = true;
+  audio.webkitPreservesPitch = true;
+  let round = 0;
+  let gapTimer = null;
+  const player = {
+    owner,
+    setRate(rate) {
+      audio.playbackRate = rate;
+    },
+    stop() {
+      clearTimeout(gapTimer);
+      audio.pause();
+      onState("done", round);
+    },
+  };
+  const start = () => {
+    round += 1;
+    audio.currentTime = 0;
+    audio.playbackRate = settings.rate;
+    onState("playing", round);
+    audio.play().catch(() => {
+      if (currentPlayer === player) currentPlayer = null;
+      onState("done", round);
+    });
+  };
+  audio.addEventListener("ended", () => {
+    if (currentPlayer !== player) return;
+    if (settings.repeat === 0 || round < settings.repeat) {
+      onState("gap", round);
+      gapTimer = setTimeout(start, 800); // a short pause to repeat after the voice
+    } else {
+      currentPlayer = null;
+      onState("done", round);
+    }
+  });
+  currentPlayer = player;
+  start();
+  return player;
+}
+
+function roundLabel(round, settings) {
+  return settings.repeat === 0 ? `${round}かいめ` : `${round} / ${settings.repeat}`;
+}
+
+function setupPlayerSettings(node, settings) {
+  const slider = node.querySelector(".rate");
+  const value = node.querySelector(".rate-value");
+  const apply = (rate) => {
+    settings.rate = Math.round(rate * 10) / 10;
+    slider.value = String(settings.rate);
+    value.textContent = `${settings.rate.toFixed(1)} ばい`;
+    if (currentPlayer && currentPlayer.owner === node) currentPlayer.setRate(settings.rate);
+  };
+  slider.addEventListener("input", () => apply(Number(slider.value)));
+  node.querySelector(".rate-reset").addEventListener("click", () => apply(1));
+  node.querySelectorAll(".repeat button").forEach((b) => {
+    b.addEventListener("click", () => {
+      settings.repeat = Number(b.dataset.repeat);
+      node.querySelectorAll(".repeat button").forEach((x) => x.classList.toggle("on", x === b));
+    });
+  });
 }
 
 function renderPractice() {
@@ -260,31 +330,25 @@ function renderPractice() {
     text.textContent = item.text;
     text.lang = item.lang;
 
-    let rate = 1;
+    const settings = { rate: 1, repeat: 1 };
+    setupPlayerSettings(node, settings);
     const play = node.querySelector(".play");
     play.disabled = !item.audio_url;
-    node.querySelectorAll(".speed button").forEach((b) => {
-      b.addEventListener("click", () => {
-        rate = Number(b.dataset.rate);
-        node.querySelectorAll(".speed button").forEach((x) => x.classList.toggle("on", x === b));
-        if (currentAudio && currentAudio.dataset.sid === String(item.sentence_id)) currentAudio.playbackRate = rate;
-      });
-    });
+    const playKey = `ai-${item.sentence_id}`;
     play.addEventListener("click", () => {
-      stopAudio();
-      const audio = new Audio(item.audio_url);
-      audio.dataset.sid = String(item.sentence_id);
-      audio.playbackRate = rate;
-      audio.preservesPitch = true;
-      currentAudio = audio;
-      play.textContent = "♪ きいて いるよ";
-      audio.addEventListener("ended", () => (play.textContent = "▶ もういちど きく"));
-      audio.addEventListener("pause", () => (play.textContent = "▶ もういちど きく"));
-      audio.play().catch(() => (play.textContent = "▶ きく"));
-      logEvent("play", item.sentence_id, `rate=${rate}`);
+      if (currentPlayer && currentPlayer.key === playKey) {
+        stopAudio();
+        return;
+      }
+      const player = playRepeated(item.audio_url, node, settings, (state, round) => {
+        if (state === "done") play.textContent = "▶ もういちど きく";
+        else play.textContent = `■ とめる（${roundLabel(round, settings)}）`;
+      });
+      player.key = playKey;
+      logEvent("play", item.sentence_id, `rate=${settings.rate};repeat=${settings.repeat}`);
     });
 
-    setupSelfPractice(node, item);
+    setupSelfPractice(node, item, settings);
     list.appendChild(node);
   }
 
@@ -293,7 +357,7 @@ function renderPractice() {
 }
 
 // The child's own practice reading stays in this browser tab; it is never uploaded.
-function setupSelfPractice(node, item) {
+function setupSelfPractice(node, item, settings) {
   const recBtn = node.querySelector(".self-rec");
   const playBtn = node.querySelector(".self-play");
   const hint = node.querySelector(".self-hint");
@@ -329,12 +393,18 @@ function setupSelfPractice(node, item) {
       logEvent("practice_record", item.sentence_id);
     }
   });
+  const selfKey = `self-${item.sentence_id}`;
   playBtn.addEventListener("click", () => {
-    stopAudio();
-    const audio = new Audio(url);
-    currentAudio = audio;
-    audio.play();
-    logEvent("practice_play", item.sentence_id);
+    if (currentPlayer && currentPlayer.key === selfKey) {
+      stopAudio();
+      return;
+    }
+    const player = playRepeated(url, node, settings, (state, round) => {
+      if (state === "done") playBtn.textContent = "▶ じぶんの こえ";
+      else playBtn.textContent = `■ とめる（${roundLabel(round, settings)}）`;
+    });
+    player.key = selfKey;
+    logEvent("practice_play", item.sentence_id, `rate=${settings.rate};repeat=${settings.repeat}`);
   });
 }
 
@@ -343,7 +413,7 @@ async function refresh() {
     const next = await api("/api/me");
     const changed = JSON.stringify(next.items.map((i) => i.status)) !== JSON.stringify(me.items.map((i) => i.status));
     me = next;
-    const busy = currentAudio && !currentAudio.paused;
+    const busy = currentPlayer !== null;
     const recording = document.querySelector(".self-rec.recording");
     if (!$("view-practice").classList.contains("hidden")) {
       if (changed && !busy && !recording) renderPractice();

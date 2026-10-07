@@ -423,6 +423,12 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         worker.wake()
         return {"count": len(rows)}
 
+    @app.post("/api/admin/clips/regenerate-all")
+    def regenerate_all(_=Depends(admin)):
+        count = store.requeue_all_clips()
+        worker.wake()
+        return {"count": count}
+
     @app.post("/api/admin/clips/{clip_id}/approve")
     def approve(clip_id: int, body: ApproveBody, _=Depends(admin)):
         if store.get_clip(clip_id) is None:

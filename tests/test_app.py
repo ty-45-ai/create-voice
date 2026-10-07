@@ -159,3 +159,17 @@ def test_login_throttle(env):
     for _ in range(8):
         assert kid.post("/api/login", json={"id": "P001", "passcode": "nope"}).status_code == 401
     assert kid.post("/api/login", json={"id": "P001", "passcode": "nope"}).status_code == 429
+
+
+def test_regenerate_all_requeues_finished_clips(env):
+    app, admin, kid = env
+    (p,) = admin.post("/api/admin/participants", json={"count": 1}).json()
+    admin.post("/api/admin/sentences", json={"text": "Hello."})
+    admin.post("/api/admin/sentences", json={"text": "こんにちは。"})
+    kid.post("/api/login", json={"id": p["id"], "passcode": p["passcode"]})
+    kid.post("/api/reference", files={"file": ("v.wav", make_wav(), "audio/wav")})
+    drain(app)
+    assert admin.post("/api/admin/clips/regenerate-all").json() == {"count": 2}
+    assert [i["status"] for i in kid.get("/api/me").json()["items"]] == ["queued", "queued"]
+    drain(app)
+    assert [i["status"] for i in kid.get("/api/me").json()["items"]] == ["done", "done"]

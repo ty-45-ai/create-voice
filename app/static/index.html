@@ -82,9 +82,25 @@
       <p class="text"></p>
       <div class="controls">
         <button class="big primary play" type="button">▶ きく</button>
-        <div class="speed" role="group" aria-label="はやさ">
-          <button type="button" data-rate="0.75">ゆっくり</button>
-          <button type="button" data-rate="1" class="on">ふつう</button>
+      </div>
+      <div class="player-settings">
+        <div class="setting">
+          <span class="setting-label">はやさ <b class="rate-value">1.0 ばい</b></span>
+          <div class="slider-row">
+            <span class="small">ゆっくり</span>
+            <input class="rate" type="range" min="0.5" max="2" step="0.1" value="1" aria-label="はやさ">
+            <span class="small">はやい</span>
+            <button class="rate-reset small-btn" type="button">ふつうに もどす</button>
+          </div>
+        </div>
+        <div class="setting">
+          <span class="setting-label">くりかえし</span>
+          <div class="repeat" role="group" aria-label="くりかえし">
+            <button type="button" data-repeat="1" class="on">1かい</button>
+            <button type="button" data-repeat="3">3かい</button>
+            <button type="button" data-repeat="5">5かい</button>
+            <button type="button" data-repeat="0">ずっと</button>
+          </div>
         </div>
       </div>
       <div class="practice">
