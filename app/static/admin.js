@@ -17,6 +17,8 @@ function h(tag, attrs = {}, ...children) {
 
 const STATUS_LABEL = { done: "完了", queued: "待機中", processing: "生成中", failed: "失敗" };
 const LANG_LABEL = { ja: "日本語", en: "英語" };
+const CONDITION_LABEL = { ai: "AI自己音声", native: "ネイティブ" };
+const PHASE_LABEL = { record: "録音", listen: "聴取", closed: "停止" };
 
 async function api(path, opts = {}) {
   const init = { credentials: "same-origin", ...opts };
@@ -67,7 +69,7 @@ $("login-form").addEventListener("submit", async (e) => {
 
 // ---- tabs ----
 
-let activeTab = "participants";
+let activeTab = "progress";
 $("tabs").addEventListener("click", (e) => {
   const tab = e.target.dataset.tab;
   if (!tab) return;
@@ -78,10 +80,30 @@ $("tabs").addEventListener("click", (e) => {
 });
 
 function refreshTab() {
+  if (activeTab === "progress") loadProgress();
   if (activeTab === "participants") loadParticipants();
   if (activeTab === "sentences") loadSentences();
   if (activeTab === "clips") loadClips();
   if (activeTab === "settings") loadSettings();
+}
+
+const adminAudio = $("admin-audio");
+function preview(url) {
+  adminAudio.classList.remove("hidden");
+  adminAudio.src = url;
+  adminAudio.play();
+}
+
+function downloadCsv(name, rows) {
+  const csv = "﻿" + rows.map((r) => r.map((v) => `"${String(v).replaceAll('"', '""')}"`).join(",")).join("\r\n");
+  const a = h("a", { href: URL.createObjectURL(new Blob([csv], { type: "text/csv" })), download: name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+}
+
+function emptyRow(table, cols, text) {
+  table.append(h("tr", {}, h("td", { colspan: cols }, text)));
 }
 
 // ---- status bar ----
@@ -91,7 +113,7 @@ async function loadStatus() {
   status = await api("/api/admin/status");
   const q = status.queue;
   $("stats").replaceChildren(
-    h("div", { class: "stat" }, "完了", h("b", {}, q.done)),
+    h("div", { class: "stat" }, "AI音声 完了", h("b", {}, q.done)),
     h("div", { class: "stat" }, "待機中", h("b", {}, q.queued)),
     h("div", { class: "stat" }, "生成中", h("b", {}, q.processing)),
     h("div", { class: "stat" }, "失敗", h("b", {}, q.failed)),
@@ -103,89 +125,158 @@ async function loadStatus() {
   $("engine-state").style.color = status.engine_error ? "var(--bad)" : "";
 }
 
+// ---- progress & phase ----
+
+function phaseSelect(value, onchange) {
+  const sel = h("select", { onchange: (e) => onchange(e.target.value) },
+    Object.entries(PHASE_LABEL).map(([v, label]) => h("option", { value: v }, label)));
+  sel.value = value;
+  return sel;
+}
+
+async function loadProgress() {
+  await loadStatus();
+  $("default-phase").value = status.default_phase;
+  const rows = await api("/api/admin/progress");
+  const table = $("progress-table");
+  table.replaceChildren(
+    h("tr", {}, ["クラス", "段階", "人数（AI / ネイティブ）", "提出済み", "AI音声 準備完了", "未提出の生徒", "AI音声 生成待ち"].map((t) => h("th", {}, t))),
+    ...rows.map((c) =>
+      h("tr", {},
+        h("td", {}, c.class_name || "（未設定）"),
+        h("td", {}, phaseSelect(c.phase, async (phase) => {
+          await api("/api/admin/phase", { method: "PUT", json: { class_name: c.class_name, phase } });
+          loadProgress();
+        })),
+        h("td", { class: "num" }, `${c.total}（${c.ai} / ${c.native}）`),
+        h("td", { class: "num" }, `${c.submitted} / ${c.total}`),
+        h("td", { class: "num" }, `${c.ai_ready} / ${c.ai}`,
+          c.ai && c.ai_ready === c.ai ? h("span", { class: "badge done" }, " 全員分そろっています") : ""),
+        h("td", { class: "mono small" }, c.not_submitted.join(", ") || "—"),
+        h("td", { class: "mono small" }, c.ai_waiting.join(", ") || "—"),
+      ),
+    ),
+  );
+  if (!rows.length) emptyRow(table, 7, "まだ参加者がいません。「参加者」タブで発行してください。");
+}
+
+$("default-phase").addEventListener("change", async (e) => {
+  await api("/api/admin/phase", { method: "PUT", json: { class_name: null, phase: e.target.value } });
+  loadProgress();
+});
+
 // ---- participants ----
 
 let lastCreated = [];
 
-$("create-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  lastCreated = await api("/api/admin/participants", {
-    json: {
-      count: Number($("create-count").value),
-      prefix: $("create-prefix").value.trim(),
-      group_name: $("create-group").value.trim(),
-    },
-  });
+function showCreated(rows) {
+  lastCreated = rows;
   $("created").classList.remove("hidden");
   $("created-table").replaceChildren(
-    h("tr", {}, h("th", {}, "ID"), h("th", {}, "あいことば"), h("th", {}, "グループ")),
-    ...lastCreated.map((p) =>
-      h("tr", {}, h("td", { class: "mono" }, p.id), h("td", { class: "mono" }, p.passcode), h("td", {}, p.group_name)),
+    h("tr", {}, ["ID", "あいことば", "クラス", "条件"].map((t) => h("th", {}, t))),
+    ...rows.map((p) =>
+      h("tr", {},
+        h("td", { class: "mono" }, p.id), h("td", { class: "mono" }, p.passcode),
+        h("td", {}, p.class_name), h("td", {}, CONDITION_LABEL[p.condition])),
     ),
   );
   loadParticipants();
+}
+
+$("create-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  showCreated(await api("/api/admin/participants", {
+    json: {
+      count: Number($("create-count").value),
+      prefix: $("create-prefix").value.trim(),
+      class_name: $("create-class").value.trim(),
+      condition: $("create-condition").value,
+    },
+  }));
 });
 
-function downloadCsv(name, rows) {
-  const csv = "﻿" + rows.map((r) => r.map((v) => `"${String(v).replaceAll('"', '""')}"`).join(",")).join("\r\n");
-  const a = h("a", { href: URL.createObjectURL(new Blob([csv], { type: "text/csv" })), download: name });
-  document.body.append(a);
-  a.click();
-  a.remove();
-}
+$("import-button").addEventListener("click", async () => {
+  const csv = $("import-csv").value.trim();
+  if (!csv) return;
+  showCreated(await api("/api/admin/participants/import", { json: { csv } }));
+  $("import-csv").value = "";
+});
 
 $("created-csv").addEventListener("click", () => {
   downloadCsv("participants-passcodes.csv", [
-    ["id", "passcode", "group", "url"],
-    ...lastCreated.map((p) => [p.id, p.passcode, p.group_name, location.origin + "/"]),
+    ["id", "passcode", "class", "condition", "url"],
+    ...lastCreated.map((p) => [p.id, p.passcode, p.class_name, p.condition, location.origin + "/"]),
   ]);
 });
 
-const adminAudio = $("admin-audio");
-function preview(url) {
-  adminAudio.classList.remove("hidden");
-  adminAudio.src = url;
-  adminAudio.play();
-}
-
 async function loadParticipants() {
-  const rows = await api("/api/admin/participants");
+  const [rows] = await Promise.all([api("/api/admin/participants"), loadStatus()]);
+  const total = status.sentence_count;
   const sel = $("clip-participant");
   const keep = sel.value;
-  sel.replaceChildren(h("option", { value: "" }, "すべて"), ...rows.map((p) => h("option", { value: p.id }, p.id)));
+  sel.replaceChildren(h("option", { value: "" }, "すべて"),
+    ...rows.filter((p) => p.condition === "ai").map((p) => h("option", { value: p.id }, p.id)));
   sel.value = keep;
 
-  $("participants-table").replaceChildren(
-    h("tr", {},
-      ["ID", "グループ", "状態", "声の登録", "生成（完了/全体）", "最終利用", "操作"].map((t) => h("th", {}, t))),
+  const table = $("participants-table");
+  table.replaceChildren(
+    h("tr", {}, ["ID", "クラス", "条件", "録音", "提出", "AI音声", "最終利用", "操作"].map((t) => h("th", {}, t))),
     ...rows.map((p) =>
-      h("tr", {},
-        h("td", { class: "mono" }, p.id),
-        h("td", {}, h("button", { class: "link", onclick: () => editGroup(p) }, p.group_name || "（なし）")),
-        h("td", {}, p.active ? "有効" : "停止中"),
-        h("td", {},
-          p.has_reference
-            ? [p.ref_uploaded_at, " ", h("button", { onclick: () => preview(`/api/admin/participants/${p.id}/reference`) }, "試聴")]
-            : h("span", { class: "small" }, "未登録")),
-        h("td", { class: "num" }, `${p.clip_done} / ${p.clip_total}`, p.clip_failed ? h("span", { class: "badge failed" }, ` 失敗 ${p.clip_failed}`) : ""),
+      h("tr", { class: p.active ? "" : "inactive" },
+        h("td", { class: "mono" }, p.id, p.active ? "" : h("div", { class: "small" }, "停止中")),
+        h("td", {}, p.class_name || "—"),
+        h("td", {}, CONDITION_LABEL[p.condition]),
+        h("td", { class: "num" }, `${p.recorded} / ${total}`,
+          p.recorded ? [" ", h("button", { onclick: () => showRecordings(p) }, "聞く")] : ""),
+        h("td", { class: "small" }, p.submitted_at || "未提出"),
+        h("td", { class: "num" }, p.condition === "ai" ? `${p.clip_done} / ${p.submitted_at ? total : 0}` : "—",
+          p.clip_failed ? h("span", { class: "badge failed" }, ` 失敗 ${p.clip_failed}`) : ""),
         h("td", { class: "small" }, p.last_activity || "—"),
         h("td", {},
           h("div", { class: "actions" },
-            h("button", { onclick: () => toggleActive(p) }, p.active ? "停止" : "再開"),
+            h("button", { onclick: () => editParticipant(p) }, "クラス・条件"),
+            p.submitted_at ? h("button", { onclick: () => reopen(p) }, "提出を取り消す") : null,
             h("button", { onclick: () => resetPass(p) }, "あいことば再発行"),
+            h("button", { onclick: () => toggleActive(p) }, p.active ? "停止" : "再開"),
             h("button", { class: "danger", onclick: () => removeParticipant(p) }, "データ削除"),
           ),
         ),
       ),
     ),
   );
-  if (!rows.length) $("participants-table").append(h("tr", {}, h("td", { colspan: 7 }, "まだ参加者がいません。")));
+  if (!rows.length) emptyRow(table, 8, "まだ参加者がいません。");
 }
 
-async function editGroup(p) {
-  const g = prompt(`${p.id} のグループ（空欄でなし）`, p.group_name);
-  if (g === null) return;
-  await api(`/api/admin/participants/${p.id}`, { method: "PATCH", json: { group_name: g } });
+async function showRecordings(p) {
+  const rows = await api(`/api/admin/participants/${p.id}/recordings`);
+  $("recordings-card").classList.remove("hidden");
+  $("recordings-title").textContent = `${p.id} の録音`;
+  $("recordings-table").replaceChildren(
+    h("tr", {}, ["文", "長さ", ""].map((t) => h("th", {}, t))),
+    ...rows.map((r) =>
+      h("tr", {},
+        h("td", {}, r.text),
+        h("td", { class: "num" }, r.seconds != null ? `${r.seconds.toFixed(1)}秒` : "未録音"),
+        h("td", {}, r.url ? h("button", { onclick: () => preview(r.url) }, "試聴") : ""),
+      ),
+    ),
+  );
+  $("recordings-card").scrollIntoView({ behavior: "smooth" });
+}
+
+async function editParticipant(p) {
+  const cls = prompt(`${p.id} のクラス`, p.class_name);
+  if (cls === null) return;
+  const cond = prompt(`${p.id} の条件（ai = AI自己音声 / native = ネイティブ）`, p.condition);
+  if (cond === null) return;
+  if (!["ai", "native"].includes(cond.trim())) return alert("条件は ai か native を入力してください。");
+  await api(`/api/admin/participants/${p.id}`, { method: "PATCH", json: { class_name: cls, condition: cond.trim() } });
+  loadParticipants();
+}
+
+async function reopen(p) {
+  if (!confirm(`${p.id} の提出を取り消して、録り直せるようにしますか？（再提出するとAI音声はつくり直されます）`)) return;
+  await api(`/api/admin/participants/${p.id}/reopen`, { method: "POST" });
   loadParticipants();
 }
 
@@ -202,16 +293,13 @@ async function resetPass(p) {
 
 async function removeParticipant(p) {
   const typed = prompt(
-    `${p.id} の声の録音・生成音声・利用ログをすべて削除します。元に戻せません。\n確認のため ID を入力してください。`,
+    `${p.id} の録音・AI音声・利用ログをすべて削除します。元に戻せません。\n確認のため ID を入力してください。`,
   );
   if (typed === null) return;
-  if (typed.trim().toUpperCase() !== p.id) {
-    alert("ID が一致しないため削除しませんでした。");
-    return;
-  }
+  if (typed.trim().toUpperCase() !== p.id) return alert("ID が一致しないため削除しませんでした。");
   await api(`/api/admin/participants/${p.id}`, { method: "DELETE" });
+  $("recordings-card").classList.add("hidden");
   loadParticipants();
-  loadStatus();
 }
 
 // ---- sentences ----
@@ -220,25 +308,49 @@ $("sentence-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const lines = $("sentence-text").value.split("\n").map((s) => s.trim()).filter(Boolean);
   for (const text of lines) {
-    await api("/api/admin/sentences", {
-      json: { text, lang: $("sentence-lang").value, group_name: $("sentence-group").value.trim() },
-    });
+    await api("/api/admin/sentences", { json: { text, lang: $("sentence-lang").value } });
   }
   $("sentence-text").value = "";
   loadSentences();
-  loadStatus();
 });
+
+let nativeTarget = null;
+$("native-file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file || nativeTarget == null) return;
+  const form = new FormData();
+  form.append("file", file);
+  await api(`/api/admin/sentences/${nativeTarget}/native`, { method: "POST", body: form });
+  loadSentences();
+});
+
+function pickNative(sid) {
+  nativeTarget = sid;
+  $("native-file").click();
+}
 
 async function loadSentences() {
   const rows = await api("/api/admin/sentences");
-  $("sentences-table").replaceChildren(
-    h("tr", {}, ["順番", "文章", "言語", "対象", "公開", "操作"].map((t) => h("th", {}, t))),
+  const table = $("sentences-table");
+  table.replaceChildren(
+    h("tr", {}, ["順番", "文", "言語", "ネイティブ音声", "公開", "操作"].map((t) => h("th", {}, t))),
     ...rows.map((s) =>
-      h("tr", {},
+      h("tr", { class: s.active ? "" : "inactive" },
         h("td", { class: "num" }, s.sort_order),
         h("td", { lang: s.lang }, s.text),
         h("td", {}, LANG_LABEL[s.lang] || s.lang),
-        h("td", {}, s.group_name || "全員"),
+        h("td", {},
+          h("div", { class: "actions" },
+            s.has_native
+              ? [
+                  h("button", { onclick: () => preview(`/api/admin/sentences/${s.id}/native?t=${Date.now()}`) }, "試聴"),
+                  h("button", { onclick: () => pickNative(s.id) }, "差し替え"),
+                  h("button", { class: "danger", onclick: () => removeNative(s) }, "削除"),
+                ]
+              : [h("span", { class: "badge failed" }, "未登録"), h("button", { onclick: () => pickNative(s.id) }, "アップロード")],
+          ),
+        ),
         h("td", {}, s.active ? "公開" : "非公開"),
         h("td", {},
           h("div", { class: "actions" },
@@ -251,21 +363,18 @@ async function loadSentences() {
       ),
     ),
   );
-  if (!rows.length) $("sentences-table").append(h("tr", {}, h("td", { colspan: 6 }, "まだ課題文がありません。")));
+  if (!rows.length) emptyRow(table, 6, "まだ教材がありません。");
 }
 
 async function patchSentence(id, body) {
   await api(`/api/admin/sentences/${id}`, { method: "PATCH", json: body });
   loadSentences();
-  loadStatus();
 }
 
 async function editSentence(s) {
-  const text = prompt("文章を編集（変更すると全員分の音声をつくり直します）", s.text);
+  const text = prompt("文を編集（変更するとその文のAI音声はつくり直されます）", s.text);
   if (text === null || !text.trim() || text.trim() === s.text) return;
-  const group = prompt("対象グループ（空欄 = 全員）", s.group_name);
-  if (group === null) return;
-  patchSentence(s.id, { text: text.trim(), lang: "auto", group_name: group });
+  patchSentence(s.id, { text: text.trim(), lang: "auto" });
 }
 
 async function moveSentence(s) {
@@ -274,44 +383,52 @@ async function moveSentence(s) {
   patchSentence(s.id, { sort_order: Number(n) });
 }
 
-async function deleteSentence(s) {
-  if (!confirm(`「${s.text}」と、その生成音声をすべて削除しますか？`)) return;
-  await api(`/api/admin/sentences/${s.id}`, { method: "DELETE" });
+async function removeNative(s) {
+  if (!confirm("この文のネイティブ音声を削除しますか？")) return;
+  await api(`/api/admin/sentences/${s.id}/native`, { method: "DELETE" });
   loadSentences();
-  loadStatus();
 }
 
-// ---- clips ----
+async function deleteSentence(s) {
+  if (!confirm(`「${s.text}」と、その文の生徒の録音・AI音声をすべて削除しますか？`)) return;
+  await api(`/api/admin/sentences/${s.id}`, { method: "DELETE" });
+  loadSentences();
+}
+
+// ---- AI clips ----
 
 $("clip-reload").addEventListener("click", loadClips);
 $("clip-participant").addEventListener("change", loadClips);
 $("clip-status").addEventListener("change", loadClips);
 $("clip-retry-failed").addEventListener("click", async () => {
   const r = await api("/api/admin/clips/regenerate-failed", { method: "POST" });
-  alert(`${r.count} 件を再生成キューに入れました。`);
+  alert(`${r.count} 件を再生成の順番待ちに入れました。`);
   loadClips();
-  loadStatus();
 });
-
 $("clip-regenerate-all").addEventListener("click", async () => {
-  if (!confirm("すべての生成音声をつくり直します（音声エンジンを切り替えたときなど）。よろしいですか？")) return;
+  if (!confirm("すべてのAI音声をつくり直します（音声エンジンを切り替えたときなど）。よろしいですか？")) return;
   const r = await api("/api/admin/clips/regenerate-all", { method: "POST" });
   alert(`${r.count} 件をつくり直しの順番待ちに入れました。`);
   loadClips();
-  loadStatus();
 });
 
 async function loadClips() {
+  await loadStatus();
+  if (!$("clip-participant").options.length || $("clip-participant").options.length === 1) {
+    loadParticipants().catch(() => {});
+  }
   const params = new URLSearchParams();
   if ($("clip-participant").value) params.set("participant_id", $("clip-participant").value);
   if ($("clip-status").value) params.set("status", $("clip-status").value);
   const rows = await api(`/api/admin/clips?${params}`);
-  const needApproval = status && status.require_approval;
-  $("clips-table").replaceChildren(
-    h("tr", {}, ["参加者", "文章", "状態", "長さ", "更新", needApproval ? "承認" : null, "操作"].filter(Boolean).map((t) => h("th", {}, t))),
+  const needApproval = status.require_approval;
+  const table = $("clips-table");
+  table.replaceChildren(
+    h("tr", {}, ["参加者", "クラス", "文", "状態", "長さ", "更新", needApproval ? "承認" : null, "操作"].filter(Boolean).map((t) => h("th", {}, t))),
     ...rows.map((c) =>
       h("tr", {},
         h("td", { class: "mono" }, c.participant_id),
+        h("td", {}, c.class_name),
         h("td", { lang: c.lang }, c.text, c.error ? h("div", { class: "err-text" }, c.error.split("\n")[0]) : ""),
         h("td", {}, h("span", { class: `badge ${c.status}` }, STATUS_LABEL[c.status] || c.status)),
         h("td", { class: "num" }, c.seconds ? `${c.seconds.toFixed(1)}秒` : ""),
@@ -319,7 +436,7 @@ async function loadClips() {
         needApproval ? h("td", {}, c.status === "done" ? (c.approved ? "承認済" : "未承認") : "") : null,
         h("td", {},
           h("div", { class: "actions" },
-            c.status === "done" ? h("button", { onclick: () => preview(`/api/admin/clips/${c.id}/audio`) }, "試聴") : null,
+            c.status === "done" ? h("button", { onclick: () => preview(`/api/admin/clips/${c.id}/audio?t=${Date.now()}`) }, "試聴") : null,
             needApproval && c.status === "done"
               ? h("button", { onclick: () => approve(c, !c.approved) }, c.approved ? "承認取消" : "承認")
               : null,
@@ -329,7 +446,7 @@ async function loadClips() {
       ),
     ),
   );
-  if (!rows.length) $("clips-table").append(h("tr", {}, h("td", { colspan: 7 }, "該当する音声はありません。")));
+  if (!rows.length) emptyRow(table, 8, "該当するAI音声はありません（AI自己音声条件の生徒が提出すると生成されます）。");
 }
 
 async function approve(c, approved) {
@@ -340,21 +457,25 @@ async function approve(c, approved) {
 async function regenerate(c) {
   await api(`/api/admin/clips/${c.id}/regenerate`, { method: "POST" });
   loadClips();
-  loadStatus();
 }
 
 // ---- settings ----
 
 async function loadSettings() {
   await loadStatus();
-  $("ref-script").value = status.reference_script;
+  $("allow-controls").checked = status.allow_controls;
   $("require-approval").checked = status.require_approval;
+  $("survey-url").value = status.survey_url;
 }
 
 $("save-settings").addEventListener("click", async () => {
   await api("/api/admin/settings", {
     method: "PUT",
-    json: { reference_script: $("ref-script").value, require_approval: $("require-approval").checked },
+    json: {
+      allow_controls: $("allow-controls").checked,
+      require_approval: $("require-approval").checked,
+      survey_url: $("survey-url").value,
+    },
   });
   await loadStatus();
   $("settings-saved").textContent = "保存しました";
@@ -373,7 +494,12 @@ async function start() {
   $("login").classList.add("hidden");
   $("app").classList.remove("hidden");
   refreshTab();
-  if (!statusTimer) statusTimer = setInterval(() => loadStatus().catch(() => {}), 5000);
+  if (!statusTimer) {
+    statusTimer = setInterval(() => {
+      if (activeTab === "progress") loadProgress().catch(() => {});
+      else loadStatus().catch(() => {});
+    }, 10000);
+  }
 }
 
 start();

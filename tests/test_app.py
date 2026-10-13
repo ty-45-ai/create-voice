@@ -2,6 +2,7 @@ import io
 import math
 import struct
 import wave
+import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,9 +10,10 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.engines.dummy import DummyEngine
 from app.main import create_app
+from app.store import balanced_conditions
 
 
-def make_wav(seconds=6.0, rate=24000):
+def make_wav(seconds=2.0, rate=24000):
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setnchannels(1)
@@ -23,13 +25,17 @@ def make_wav(seconds=6.0, rate=24000):
     return buf.getvalue()
 
 
+def make_app(tmp_path, engine_factory=DummyEngine):
+    settings = Settings(data_dir=tmp_path, engine="dummy", admin_password="secret-admin")
+    return create_app(settings, start_worker=False, engine_factory=engine_factory)
+
+
 @pytest.fixture
 def env(tmp_path):
-    settings = Settings(data_dir=tmp_path, engine="dummy", admin_password="secret-admin")
-    app = create_app(settings, start_worker=False, engine_factory=DummyEngine)
-    with TestClient(app) as admin, TestClient(app) as kid:
+    app = make_app(tmp_path)
+    with TestClient(app) as admin:
         assert admin.post("/api/admin/login", json={"password": "secret-admin"}).status_code == 200
-        yield app, admin, kid
+        yield app, admin, lambda: TestClient(app)
 
 
 def drain(app):
@@ -37,101 +43,190 @@ def drain(app):
         pass
 
 
-def test_full_flow(env):
-    app, admin, kid = env
-    created = admin.post("/api/admin/participants", json={"count": 30, "prefix": "P"}).json()
-    assert len(created) == 30 and created[0]["id"] == "P001" and created[-1]["id"] == "P030"
-    admin.post("/api/admin/sentences", json={"text": "きょうは いい てんき です。"})
-    admin.post("/api/admin/sentences", json={"text": "I like apples."})
+def login(client, p):
+    assert client.post("/api/login", json={"id": p["id"], "passcode": p["passcode"]}).status_code == 200
 
-    assert kid.get("/api/me").status_code == 401
-    assert kid.post("/api/login", json={"id": "p001", "passcode": "wrong"}).status_code == 401
-    assert kid.post("/api/login", json={"id": "p001", "passcode": created[0]["passcode"]}).status_code == 200
 
+def record_all(client, me=None):
+    me = me or client.get("/api/me").json()
+    for item in me["items"]:
+        r = client.post(f"/api/recordings/{item['sentence_id']}", files={"file": ("v.wav", make_wav(), "audio/wav")})
+        assert r.status_code == 200, r.text
+
+
+def setup_study(admin, n=2):
+    admin.post("/api/admin/sentences", json={"text": "I like reading books."})
+    admin.post("/api/admin/sentences", json={"text": "きょうは はれです。"})
+    sids = [s["id"] for s in admin.get("/api/admin/sentences").json()]
+    for sid in sids:
+        admin.post(f"/api/admin/sentences/{sid}/native", files={"file": ("n.mp3", b"ID3fake-mp3", "audio/mpeg")})
+    ai = admin.post("/api/admin/participants", json={"count": n, "class_name": "3-1", "condition": "ai"}).json()
+    native = admin.post("/api/admin/participants", json={"count": n, "class_name": "3-1", "condition": "native"}).json()
+    return ai, native
+
+
+def test_home_record_then_school_listen(env):
+    app, admin, client = env
+    ai, native = setup_study(admin, n=1)
+    kid_ai, kid_native = client(), client()
+    login(kid_ai, ai[0])
+    login(kid_native, native[0])
+
+    me = kid_ai.get("/api/me").json()
+    assert me["phase"] == "record" and me["submitted"] is False
+    assert [i["recorded"] for i in me["items"]] == [False, False]
+    assert "model_url" not in me["items"][0]  # no peeking at the model during recording
+    # Cannot submit before every sentence is recorded.
+    assert kid_ai.post("/api/submit").status_code == 400
+    record_all(kid_ai)
+    record_all(kid_native)
+    assert kid_ai.post("/api/submit").status_code == 200
+    assert kid_native.post("/api/submit").status_code == 200
+    # Locked after submitting.
+    sid = me["items"][0]["sentence_id"]
+    assert kid_ai.post(f"/api/recordings/{sid}", files={"file": ("v.wav", make_wav(), "audio/wav")}).status_code == 409
+
+    # Only the AI-condition student gets AI clips.
+    clips = admin.get("/api/admin/clips").json()
+    assert {c["participant_id"] for c in clips} == {ai[0]["id"]} and len(clips) == 2
+    drain(app)
+    progress = admin.get("/api/admin/progress").json()[0]
+    assert progress["submitted"] == 2 and progress["ai_ready"] == 1 and progress["not_submitted"] == []
+
+    # Model audio is not reachable until the class moves to the listening stage.
+    assert kid_ai.get(f"/api/model/{sid}/audio").status_code == 409
+    admin.put("/api/admin/phase", json={"class_name": "3-1", "phase": "listen"})
+
+    me_ai = kid_ai.get("/api/me").json()
+    me_native = kid_native.get("/api/me").json()
+    assert me_ai["phase"] == "listen"
+    own = kid_ai.get(me_ai["items"][0]["own_url"])
+    assert own.status_code == 200 and own.content[:4] == b"RIFF"
+    model_ai = kid_ai.get(me_ai["items"][0]["model_url"])
+    model_native = kid_native.get(me_native["items"][0]["model_url"])
+    assert model_ai.content[:4] == b"RIFF"  # AI self-voice (dummy engine WAV)
+    assert model_native.content == b"ID3fake-mp3"  # the uploaded native speaker audio
+    assert model_native.headers["content-type"] == "audio/mpeg"
+    # The condition itself is never sent to the student.
+    assert "condition" not in str(me_ai) and "native" not in str(me_native).replace("model", "")
+
+    kid_ai.post("/api/events", json={"type": "play_model", "sentence_id": sid, "detail": "rate=1.5;repeat=3"})
+    log = admin.get("/api/admin/events.csv").text
+    assert "play_model" in log and "submit" in log and "rate=1.5;repeat=3" in log
+
+
+def test_phase_per_class_and_closed(env):
+    app, admin, client = env
+    admin.post("/api/admin/sentences", json={"text": "Hello."})
+    a = admin.post("/api/admin/participants", json={"count": 1, "prefix": "A", "class_name": "3-1", "condition": "ai"}).json()[0]
+    b = admin.post("/api/admin/participants", json={"count": 1, "prefix": "B", "class_name": "3-2", "condition": "ai"}).json()[0]
+    admin.put("/api/admin/phase", json={"class_name": "3-2", "phase": "closed"})
+    ka, kb = client(), client()
+    login(ka, a)
+    login(kb, b)
+    assert ka.get("/api/me").json()["phase"] == "record"
+    me_b = kb.get("/api/me").json()
+    assert me_b["phase"] == "closed" and me_b["items"] == []
+    assert kb.post("/api/submit").status_code == 409
+
+
+def test_privacy_between_students(env):
+    app, admin, client = env
+    ai, _ = setup_study(admin, n=2)
+    k1, k2 = client(), client()
+    login(k1, ai[0])
+    record_all(k1)
+    url = k1.get("/api/me").json()["items"][0]["own_url"]
+    login(k2, ai[1])
+    assert k2.get(url).status_code == 404  # same path, but resolves to k2's own (missing) recording
+    assert k2.get("/api/admin/participants").status_code == 401
+
+
+def test_approval_and_controls_settings(env):
+    app, admin, client = env
+    ai, _ = setup_study(admin, n=1)
+    admin.put("/api/admin/settings", json={"require_approval": True, "allow_controls": False,
+                                            "survey_url": "https://forms.example/?id={id}"})
+    kid = client()
+    login(kid, ai[0])
+    record_all(kid)
+    kid.post("/api/submit")
+    drain(app)
+    admin.put("/api/admin/phase", json={"class_name": None, "phase": "listen"})
     me = kid.get("/api/me").json()
-    assert me["has_reference"] is False
-    assert [i["status"] for i in me["items"]] == ["no_reference", "no_reference"]
-    assert [i["lang"] for i in me["items"]] == ["ja", "en"]
+    assert me["allow_controls"] is False
+    assert me["survey_url"] == f"https://forms.example/?id={ai[0]['id']}"
+    assert all(i["model_url"] is None for i in me["items"])
+    for c in admin.get("/api/admin/clips").json():
+        admin.post(f"/api/admin/clips/{c['id']}/approve", json={"approved": True})
+    assert all(i["model_url"] for i in kid.get("/api/me").json()["items"])
 
-    r = kid.post("/api/reference", files={"file": ("v.wav", make_wav(), "audio/wav")})
-    assert r.status_code == 200, r.text
-    assert [i["status"] for i in kid.get("/api/me").json()["items"]] == ["queued", "queued"]
 
+def test_reopen_and_resubmit_regenerates(env):
+    app, admin, client = env
+    ai, _ = setup_study(admin, n=1)
+    kid = client()
+    login(kid, ai[0])
+    record_all(kid)
+    kid.post("/api/submit")
     drain(app)
-    items = kid.get("/api/me").json()["items"]
-    assert [i["status"] for i in items] == ["done", "done"]
-    audio = kid.get(items[0]["audio_url"])
-    assert audio.status_code == 200 and audio.content[:4] == b"RIFF"
-    assert audio.headers["cache-control"] == "no-store"
-
-    # A new sentence is generated for participants who already have a voice sample.
-    admin.post("/api/admin/sentences", json={"text": "Good morning.", "lang": "en"})
+    admin.post(f"/api/admin/participants/{ai[0]['id']}/reopen")
+    me = kid.get("/api/me").json()
+    assert me["submitted"] is False
+    record_all(kid, me)
+    kid.post("/api/submit")
+    assert {c["status"] for c in admin.get("/api/admin/clips").json()} == {"queued"}
     drain(app)
-    assert [i["status"] for i in kid.get("/api/me").json()["items"]] == ["done"] * 3
-
-    kid.post("/api/events", json={"type": "play", "sentence_id": items[0]["sentence_id"], "detail": "rate=1"})
-    csv_text = admin.get("/api/admin/events.csv").text
-    assert "P001" in csv_text and "play" in csv_text
+    assert {c["status"] for c in admin.get("/api/admin/clips").json()} == {"done"}
 
 
-def test_other_participants_audio_is_private(env):
-    app, admin, kid = env
-    a, b = admin.post("/api/admin/participants", json={"count": 2}).json()
-    admin.post("/api/admin/sentences", json={"text": "Hello."})
-    kid.post("/api/login", json={"id": a["id"], "passcode": a["passcode"]})
-    kid.post("/api/reference", files={"file": ("v.wav", make_wav(), "audio/wav")})
+def test_import_csv_balances_random_within_class(env):
+    app, admin, client = env
+    lines = "id,class,condition\n" + "\n".join(f"S{i:03d},3-{1 + i % 2},random" for i in range(20)) + "\nX001,3-3,native"
+    created = admin.post("/api/admin/participants/import", json={"csv": lines}).json()
+    assert len(created) == 21 and all(len(p["passcode"]) == 6 for p in created)
+    for cls in ("3-1", "3-2"):
+        conds = [p["condition"] for p in created if p["class_name"] == cls]
+        assert conds.count("ai") == conds.count("native") == 5
+    assert created[-1]["condition"] == "native"
+    bad = admin.post("/api/admin/participants/import", json={"csv": "S001,3-1,ai\nbad id!,3-1,ai\nZ1,3-1,maybe"})
+    assert bad.status_code == 400 and "すでに" in bad.text and "不正" in bad.text and "maybe" in bad.text
+
+
+def test_balanced_conditions():
+    for n in (1, 2, 7, 35):
+        c = balanced_conditions(n)
+        assert len(c) == n and abs(c.count("ai") - c.count("native")) <= 1
+
+
+def test_exports_and_delete(env):
+    app, admin, client = env
+    ai, _ = setup_study(admin, n=1)
+    kid = client()
+    login(kid, ai[0])
+    record_all(kid)
+    kid.post("/api/submit")
     drain(app)
-    url = kid.get("/api/me").json()["items"][0]["audio_url"]
-
-    kid.post("/api/logout")
-    kid.post("/api/login", json={"id": b["id"], "passcode": b["passcode"]})
-    assert kid.get(url).status_code == 404
-    assert kid.get("/api/admin/participants").status_code == 401
-
-
-def test_approval_hides_unapproved_audio(env):
-    app, admin, kid = env
-    (p,) = admin.post("/api/admin/participants", json={"count": 1}).json()
-    admin.put("/api/admin/settings", json={"require_approval": True})
-    admin.post("/api/admin/sentences", json={"text": "Hello."})
-    kid.post("/api/login", json={"id": p["id"], "passcode": p["passcode"]})
-    kid.post("/api/reference", files={"file": ("v.wav", make_wav(), "audio/wav")})
-    drain(app)
-    item = kid.get("/api/me").json()["items"][0]
-    assert item["status"] == "reviewing" and item["audio_url"] is None
-    clip = admin.get("/api/admin/clips").json()[0]
-    admin.post(f"/api/admin/clips/{clip['id']}/approve", json={"approved": True})
-    assert kid.get("/api/me").json()["items"][0]["status"] == "done"
-
-
-def test_reference_validation(env):
-    app, admin, kid = env
-    (p,) = admin.post("/api/admin/participants", json={"count": 1}).json()
-    kid.post("/api/login", json={"id": p["id"], "passcode": p["passcode"]})
-    assert kid.post("/api/reference", files={"file": ("v.wav", make_wav(1.0), "audio/wav")}).status_code == 400
-    assert kid.post("/api/reference", files={"file": ("v.wav", b"not audio", "audio/wav")}).status_code == 400
-
-
-def test_edit_sentence_regenerates_and_delete_participant_removes_files(env):
-    app, admin, kid = env
-    (p,) = admin.post("/api/admin/participants", json={"count": 1}).json()
-    sid = admin.post("/api/admin/sentences", json={"text": "Hello."}).json()["id"]
-    kid.post("/api/login", json={"id": p["id"], "passcode": p["passcode"]})
-    kid.post("/api/reference", files={"file": ("v.wav", make_wav(), "audio/wav")})
-    drain(app)
-
-    admin.patch(f"/api/admin/sentences/{sid}", json={"text": "Hello there."})
-    assert kid.get("/api/me").json()["items"][0]["status"] == "queued"
-    drain(app)
-    assert kid.get("/api/me").json()["items"][0]["status"] == "done"
+    z = zipfile.ZipFile(io.BytesIO(admin.get("/api/admin/recordings.zip").content))
+    assert len(z.namelist()) == 2 and z.namelist()[0].startswith("3-1/P001_s")
+    assert "P001" in admin.get("/api/admin/participants.csv").text
 
     store = app.state.store
-    assert (store.refs_dir / f"{p['id']}.wav").exists()
-    assert any((store.clips_dir / p["id"]).iterdir())
-    assert admin.delete(f"/api/admin/participants/{p['id']}").status_code == 200
-    assert not (store.refs_dir / f"{p['id']}.wav").exists()
-    assert not (store.clips_dir / p["id"]).exists()
+    assert (store.recordings_dir / "P001").exists() and (store.clips_dir / "P001").exists()
+    assert admin.delete("/api/admin/participants/P001").status_code == 200
+    assert not (store.recordings_dir / "P001").exists() and not (store.clips_dir / "P001").exists()
     assert kid.get("/api/me").status_code == 401
+
+
+def test_recording_validation(env):
+    app, admin, client = env
+    ai, _ = setup_study(admin, n=1)
+    kid = client()
+    login(kid, ai[0])
+    sid = kid.get("/api/me").json()["items"][0]["sentence_id"]
+    assert kid.post(f"/api/recordings/{sid}", files={"file": ("v.wav", make_wav(0.2), "audio/wav")}).status_code == 400
+    assert kid.post(f"/api/recordings/{sid}", files={"file": ("v.wav", b"junk", "audio/wav")}).status_code == 400
+    assert kid.post("/api/recordings/9999", files={"file": ("v.wav", make_wav(), "audio/wav")}).status_code == 404
 
 
 def test_failed_engine_marks_clip_failed(tmp_path):
@@ -141,35 +236,46 @@ def test_failed_engine_marks_clip_failed(tmp_path):
         def synthesize(self, *a):
             raise RuntimeError("boom")
 
-    app = create_app(Settings(data_dir=tmp_path, admin_password="x"), start_worker=False, engine_factory=Broken)
+    app = make_app(tmp_path, Broken)
     with TestClient(app) as admin, TestClient(app) as kid:
-        admin.post("/api/admin/login", json={"password": "x"})
-        (p,) = admin.post("/api/admin/participants", json={"count": 1}).json()
-        admin.post("/api/admin/sentences", json={"text": "Hello."})
-        kid.post("/api/login", json={"id": p["id"], "passcode": p["passcode"]})
-        kid.post("/api/reference", files={"file": ("v.wav", make_wav(), "audio/wav")})
+        admin.post("/api/admin/login", json={"password": "secret-admin"})
+        ai, _ = setup_study(admin, n=1)
+        login(kid, ai[0])
+        record_all(kid)
+        kid.post("/api/submit")
         drain(app)
         clips = admin.get("/api/admin/clips").json()
         assert clips[0]["status"] == "failed" and "boom" in clips[0]["error"]
+        assert admin.post("/api/admin/clips/regenerate-failed").json() == {"count": 2}
 
 
 def test_login_throttle(env):
-    app, admin, kid = env
+    app, admin, client = env
     admin.post("/api/admin/participants", json={"count": 1})
+    kid = client()
     for _ in range(8):
         assert kid.post("/api/login", json={"id": "P001", "passcode": "nope"}).status_code == 401
     assert kid.post("/api/login", json={"id": "P001", "passcode": "nope"}).status_code == 429
 
 
-def test_regenerate_all_requeues_finished_clips(env):
-    app, admin, kid = env
-    (p,) = admin.post("/api/admin/participants", json={"count": 1}).json()
-    admin.post("/api/admin/sentences", json={"text": "Hello."})
-    admin.post("/api/admin/sentences", json={"text": "こんにちは。"})
-    kid.post("/api/login", json={"id": p["id"], "passcode": p["passcode"]})
-    kid.post("/api/reference", files={"file": ("v.wav", make_wav(), "audio/wav")})
-    drain(app)
-    assert admin.post("/api/admin/clips/regenerate-all").json() == {"count": 2}
-    assert [i["status"] for i in kid.get("/api/me").json()["items"]] == ["queued", "queued"]
-    drain(app)
-    assert [i["status"] for i in kid.get("/api/me").json()["items"]] == ["done", "done"]
+def test_old_database_is_migrated(tmp_path):
+    import sqlite3
+
+    conn = sqlite3.connect(tmp_path / "ondoku.sqlite3")
+    conn.executescript("""
+        CREATE TABLE participants (id TEXT PRIMARY KEY, passcode_hash TEXT NOT NULL,
+          group_name TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, ref_path TEXT,
+          ref_duration REAL, ref_uploaded_at REAL, created_at REAL NOT NULL);
+        CREATE TABLE sentences (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, lang TEXT NOT NULL,
+          group_name TEXT NOT NULL DEFAULT '', sort_order INTEGER NOT NULL DEFAULT 0,
+          active INTEGER NOT NULL DEFAULT 1, created_at REAL NOT NULL);
+        INSERT INTO participants(id, passcode_hash, group_name, created_at) VALUES ('P001', 'x', '5-1', 0);
+    """)
+    conn.commit()
+    conn.close()
+    app = make_app(tmp_path)
+    with TestClient(app) as admin:
+        admin.post("/api/admin/login", json={"password": "secret-admin"})
+        rows = admin.get("/api/admin/participants").json()
+        assert rows[0]["class_name"] == "5-1" and rows[0]["condition"] == "ai"
+        assert admin.post("/api/admin/sentences", json={"text": "Hi."}).status_code == 200

@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
-  <title>おんどく ボイス 管理</title>
+  <title>音読練習 管理</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="admin">
   <header class="topbar">
-    <span class="brand">おんどく ボイス 管理画面</span>
+    <span class="brand">音読練習 管理画面</span>
     <span id="engine-state" class="who"></span>
   </header>
   <main>
@@ -23,23 +23,57 @@
     </section>
 
     <section id="app" class="hidden">
-      <div class="card stats" id="stats"></div>
       <nav class="tabs" id="tabs">
-        <button data-tab="participants" class="on" type="button">参加者</button>
-        <button data-tab="sentences" type="button">課題文</button>
-        <button data-tab="clips" type="button">生成音声</button>
-        <button data-tab="settings" type="button">設定・ログ</button>
+        <button data-tab="progress" class="on" type="button">進捗・段階</button>
+        <button data-tab="participants" type="button">参加者</button>
+        <button data-tab="sentences" type="button">教材</button>
+        <button data-tab="clips" type="button">AI音声</button>
+        <button data-tab="settings" type="button">設定・出力</button>
       </nav>
+      <audio id="admin-audio" controls class="hidden"></audio>
 
-      <div id="tab-participants" class="tab">
+      <!-- 進捗・段階 -->
+      <div id="tab-progress" class="tab">
+        <div class="card">
+          <h2>クラス別の進捗と段階</h2>
+          <p class="small">段階：<b>録音</b>＝家で教材を録音して提出 ／ <b>聴取</b>＝学校で自分の録音とお手本を聞く ／ <b>停止</b>＝利用不可。クラスごとに切り替えられます。</p>
+          <div class="inline-form" style="margin-bottom:12px">
+            <label>まだ参加者がいないクラスも含めた既定の段階
+              <select id="default-phase">
+                <option value="record">録音</option>
+                <option value="listen">聴取</option>
+                <option value="closed">停止</option>
+              </select>
+            </label>
+          </div>
+          <div class="table-wrap"><table id="progress-table"></table></div>
+        </div>
+        <div class="card stats" id="stats"></div>
+      </div>
+
+      <!-- 参加者 -->
+      <div id="tab-participants" class="tab hidden">
         <div class="card">
           <h2>参加者IDを発行</h2>
           <form id="create-form" class="inline-form">
-            <label>人数 <input id="create-count" type="number" min="1" max="200" value="30" required></label>
-            <label>ID接頭辞 <input id="create-prefix" value="P" maxlength="8" pattern="[A-Za-z]*"></label>
-            <label>グループ（任意） <input id="create-group" maxlength="64" placeholder="例: 5年1組"></label>
+            <label>人数 <input id="create-count" type="number" min="1" max="300" value="35" required></label>
+            <label>ID接頭辞（英字） <input id="create-prefix" value="P" maxlength="8" pattern="[A-Za-z]*"></label>
+            <label>クラス <input id="create-class" maxlength="64" placeholder="例: 3-1"></label>
+            <label>条件
+              <select id="create-condition">
+                <option value="random">ランダムに半々</option>
+                <option value="ai">AI自己音声</option>
+                <option value="native">ネイティブ音声</option>
+              </select>
+            </label>
             <button class="primary" type="submit">発行する</button>
           </form>
+          <details style="margin-top:12px">
+            <summary>CSVで一括登録する</summary>
+            <p class="small">1行に「ID,クラス,条件」。条件は ai / native / random（random はクラスごとに半々）。例：<code>S001,3-1,random</code></p>
+            <textarea id="import-csv" rows="6" placeholder="S001,3-1,random&#10;S002,3-1,random"></textarea>
+            <button id="import-button" class="primary" type="button">登録する</button>
+          </details>
           <div id="created" class="hidden">
             <p class="notice warn">あいことばはこの画面でしか表示されません。CSVを保存し、氏名との対応表はアプリの外で管理してください。</p>
             <button id="created-csv" type="button">CSVを保存</button>
@@ -50,33 +84,39 @@
           <h2>参加者一覧</h2>
           <div class="table-wrap"><table id="participants-table"></table></div>
         </div>
+        <div id="recordings-card" class="card hidden">
+          <h2 id="recordings-title"></h2>
+          <div class="table-wrap"><table id="recordings-table"></table></div>
+        </div>
       </div>
 
+      <!-- 教材 -->
       <div id="tab-sentences" class="tab hidden">
         <div class="card">
-          <h2>課題文を追加</h2>
+          <h2>教材の文を追加</h2>
           <form id="sentence-form">
-            <label>文章（1行に1文。複数行で一括追加） <textarea id="sentence-text" required></textarea></label>
+            <label>文（1行に1文。複数行で一括追加） <textarea id="sentence-text" required></textarea></label>
             <div class="inline-form">
               <label>言語
                 <select id="sentence-lang">
                   <option value="auto">自動判定</option>
-                  <option value="ja">日本語</option>
                   <option value="en">英語</option>
+                  <option value="ja">日本語</option>
                 </select>
               </label>
-              <label>対象グループ（空欄 = 全員） <input id="sentence-group" maxlength="64"></label>
               <button class="primary" type="submit">追加</button>
             </div>
           </form>
         </div>
         <div class="card">
-          <h2>課題文一覧</h2>
-          <p class="small">文章を変更すると、その文の音声は全員分つくり直されます。</p>
+          <h2>教材一覧</h2>
+          <p class="small">ネイティブ条件の生徒には、各文の「ネイティブ音声」がお手本として流れます。文を変更すると、その文のAI音声はつくり直されます。</p>
           <div class="table-wrap"><table id="sentences-table"></table></div>
+          <input id="native-file" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg" hidden>
         </div>
       </div>
 
+      <!-- AI音声 -->
       <div id="tab-clips" class="tab hidden">
         <div class="card">
           <div class="inline-form">
@@ -94,27 +134,30 @@
             <button id="clip-retry-failed" type="button">失敗をすべて再生成</button>
             <button id="clip-regenerate-all" type="button">全部つくり直す</button>
           </div>
-          <audio id="admin-audio" controls class="hidden"></audio>
           <div class="table-wrap"><table id="clips-table"></table></div>
         </div>
       </div>
 
+      <!-- 設定・出力 -->
       <div id="tab-settings" class="tab hidden">
         <div class="card">
-          <h2>声の登録で読ませる文章</h2>
-          <p class="small">6〜30秒ほどで読める、子どもが読みやすい文章にしてください。</p>
-          <textarea id="ref-script" rows="6"></textarea>
-          <label class="inline-form" style="margin-top:12px">
-            <input id="require-approval" type="checkbox" style="width:auto;display:inline">
-            生成音声を研究者が承認してから参加者に公開する
+          <h2>聴取画面の設定</h2>
+          <label class="check-row"><input id="allow-controls" type="checkbox"> 生徒が速さ（0.5〜2.0倍）とくり返しを変えられるようにする</label>
+          <label class="check-row"><input id="require-approval" type="checkbox"> AI音声は研究者が承認してから生徒に公開する</label>
+          <label>練習後アンケートのURL（空欄なら表示しない。<code>{id}</code> は参加者IDに置き換わります）
+            <input id="survey-url" placeholder="https://forms.gle/...?entry.123={id}">
           </label>
           <button id="save-settings" class="primary" type="button">保存</button>
           <span id="settings-saved" class="small"></span>
         </div>
         <div class="card">
-          <h2>利用ログ</h2>
-          <p>ログイン・声の登録・再生・自分の音読の録音/再生の記録をCSVで書き出します（音声そのものは含みません）。</p>
-          <a href="/api/admin/events.csv"><button type="button">ログCSVをダウンロード</button></a>
+          <h2>データの書き出し</h2>
+          <div class="row" style="justify-content:flex-start">
+            <a href="/api/admin/events.csv"><button type="button">利用ログ（CSV）</button></a>
+            <a href="/api/admin/participants.csv"><button type="button">参加者一覧（CSV）</button></a>
+            <a href="/api/admin/recordings.zip"><button type="button">生徒の録音（ZIP）</button></a>
+          </div>
+          <p class="small">利用ログ：ログイン・録音・提出・再生（速さ・くり返し）・アンケートを開いた記録。録音ZIPは個人の声を含むため、研究者の管理下でのみ扱ってください。</p>
         </div>
       </div>
     </section>

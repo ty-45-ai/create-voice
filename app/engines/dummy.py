@@ -18,9 +18,10 @@ class DummyEngine:
     def __init__(self, delay: float = 0.0):
         self.delay = delay
 
-    def synthesize(self, text: str, lang: str, reference_wav: Path, out_wav: Path) -> None:
-        if not Path(reference_wav).is_file():
-            raise FileNotFoundError(reference_wav)
+    def synthesize(self, text: str, lang: str, references: list[Path], out_wav: Path) -> None:
+        for ref in references:
+            if not Path(ref).is_file():
+                raise FileNotFoundError(ref)
         if self.delay:
             time.sleep(self.delay)
         base = 330.0 if lang == "ja" else 440.0

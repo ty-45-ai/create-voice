@@ -1,16 +1,14 @@
-import { Recorder, decodeFile, encodeWav, micSupported, prepareVoice } from "./audio.js";
+import { Recorder, decodeFile, micSupported, prepareVoice } from "./audio.js";
 
 const $ = (id) => document.getElementById(id);
-const views = ["view-login", "view-record", "view-practice"];
+const VIEWS = ["view-login", "view-record", "view-submitted", "view-listen", "view-closed"];
 let me = null;
 let pollTimer = null;
-let recorder = null;
-let recTimer = null;
-let pendingBlob = null;
 let currentPlayer = null;
+let activeRecorder = null; // only one sentence records at a time
 
 function show(view) {
-  views.forEach((v) => $(v).classList.toggle("hidden", v !== view));
+  VIEWS.forEach((v) => $(v).classList.toggle("hidden", v !== view));
   $("logout").classList.toggle("hidden", view === "view-login");
 }
 
@@ -22,13 +20,14 @@ async function api(path, opts = {}) {
     throw new Error("login");
   }
   if (!res.ok) {
-    let msg = "うまく いきませんでした。もういちど ためしてね。";
+    let msg = "うまくいきませんでした。もう一度試してください。";
     try {
-      msg = (await res.json()).detail || msg;
+      const d = (await res.json()).detail;
+      if (typeof d === "string") msg = d;
     } catch (_) {
       /* keep default */
     }
-    throw new Error(typeof msg === "string" ? msg : "エラー");
+    throw new Error(msg);
   }
   return res.json();
 }
@@ -55,13 +54,14 @@ $("login-form").addEventListener("submit", async (e) => {
     $("login-pass").value = "";
     await load();
   } catch (err) {
-    if (err.message !== "login") $("login-error").textContent = err.message;
-    else $("login-error").textContent = "ID か あいことば が ちがいます";
+    $("login-error").textContent = err.message === "login" ? "ID または あいことば が違います" : err.message;
   }
 });
 
 $("logout").addEventListener("click", async () => {
   stopAudio();
+  if (activeRecorder) activeRecorder.cancel();
+  activeRecorder = null;
   await fetch("/api/logout", { method: "POST" });
   me = null;
   $("who").textContent = "";
@@ -69,7 +69,7 @@ $("logout").addEventListener("click", async () => {
   show("view-login");
 });
 
-// ---- load & route ----
+// ---- routing by the class's current stage ----
 
 async function load() {
   try {
@@ -79,149 +79,186 @@ async function load() {
     return;
   }
   $("who").textContent = me.id;
-  if (!me.has_reference) {
-    openRecorder(false);
-  } else if ($("view-record").classList.contains("hidden")) {
-    renderPractice();
-  }
+  render();
 }
 
-// ---- voice registration ----
+function render() {
+  clearTimeout(pollTimer);
+  if (me.phase === "closed") return show("view-closed");
+  if (me.phase === "listen") return renderListen();
+  if (me.submitted) return show("view-submitted");
+  return renderRecord();
+}
 
-function openRecorder(canCancel) {
-  $("script").textContent = me.reference_script;
-  resetRecorderUI();
-  $("rec-cancel").classList.toggle("hidden", !canCancel);
-  if (!micSupported()) {
-    $("rec-start").disabled = true;
-    $("rec-error").textContent =
-      "この がめんでは マイクが つかえません。したの「ファイルを えらぶ」を つかってね。";
-    document.querySelector("details.upload").open = true;
-  }
+// ---- home: record each sentence ----
+
+function renderRecord() {
   show("view-record");
+  const supported = micSupported();
+  $("mic-warning").classList.toggle("hidden", supported);
+  $("mic-warning").textContent =
+    "この画面ではマイクが使えません。各文の「ファイルを選ぶ」から録音ファイルを送ってください。";
+  const list = $("record-items");
+  list.innerHTML = "";
+  me.items.forEach((item, i) => list.appendChild(recordCard(item, i, supported)));
+  updateRecordProgress();
 }
 
-function resetRecorderUI() {
-  pendingBlob = null;
-  $("rec-start").classList.remove("hidden");
-  $("rec-start").disabled = false;
-  $("rec-stop").classList.add("hidden");
-  $("rec-review").classList.add("hidden");
-  $("rec-error").textContent = "";
-  $("rec-time").textContent = "0.0 びょう";
-  $("meter-bar").style.width = "0%";
-  $("file-input").value = "";
+function updateRecordProgress() {
+  const done = me.items.filter((i) => i.recorded).length;
+  const total = me.items.length;
+  $("record-progress").textContent = total
+    ? `${total} 文中 ${done} 文を保存しました。`
+    : "まだ録音する文がありません。先生の準備をお待ちください。";
+  $("record-progress").className = `notice${total && done === total ? " good" : ""}`;
+  $("submit").disabled = !total || done < total;
 }
 
-$("rec-cancel").addEventListener("click", () => renderPractice());
+function recordCard(item, index, supported) {
+  const node = $("record-tpl").content.firstElementChild.cloneNode(true);
+  const q = (sel) => node.querySelector(sel);
+  q(".seq").textContent = `${index + 1}`;
+  q(".text").textContent = item.text;
+  q(".text").lang = item.lang;
+  const status = q(".status");
+  const startBtn = q(".rec-start");
+  const stopBtn = q(".rec-stop");
+  const meter = q(".meter");
+  const review = q(".review");
+  const saved = q(".saved");
+  const error = q(".error");
+  let pending = null;
+  let timer = null;
 
-$("rec-start").addEventListener("click", async () => {
-  $("rec-error").textContent = "";
-  recorder = new Recorder((peak) => {
-    $("meter-bar").style.width = `${Math.min(100, peak * 140)}%`;
-  });
-  try {
-    await recorder.start();
-  } catch (err) {
-    console.error(err);
-    $("rec-error").textContent =
-      "マイクが つかえませんでした。ブラウザの マイクの きょかを たしかめてね。";
-    return;
-  }
-  $("rec-start").classList.add("hidden");
-  $("rec-stop").classList.remove("hidden");
-  $("rec-review").classList.add("hidden");
-  recTimer = setInterval(() => {
-    const t = recorder.elapsed();
-    $("rec-time").textContent = `${t.toFixed(1)} びょう`;
-    if (t > 90) $("rec-stop").click();
-  }, 100);
-});
+  const showSaved = () => {
+    status.textContent = item.recorded ? "保存済み ✓" : "未録音";
+    status.className = `status ${item.recorded ? "ok" : "wait"}`;
+    saved.classList.toggle("hidden", !item.recorded);
+    if (item.recorded) saved.querySelector("audio").src = item.own_url;
+    startBtn.textContent = item.recorded ? "● 録り直す" : "● 録音";
+  };
+  showSaved();
+  if (!supported) startBtn.classList.add("hidden");
 
-$("rec-stop").addEventListener("click", async () => {
-  clearInterval(recTimer);
-  $("rec-stop").classList.add("hidden");
-  const raw = await recorder.stop();
-  recorder = null;
-  $("meter-bar").style.width = "0%";
-  await review(raw);
-});
+  const reviewVoice = async (raw) => {
+    const voice = await prepareVoice(raw, 120);
+    pending = voice.blob;
+    review.querySelector("audio").src = URL.createObjectURL(voice.blob);
+    const check = review.querySelector(".check");
+    const save = review.querySelector(".save");
+    save.disabled = false;
+    if (voice.duration < 0.5) {
+      check.textContent = "声が聞き取れませんでした。もう一度録音してください。";
+      check.className = "check notice bad";
+      save.disabled = true;
+    } else if (voice.peak < 0.05 || voice.voiced < 0.2) {
+      check.textContent = "声が小さいようです。マイクに近づいて、はっきり読むとよくなります。";
+      check.className = "check notice warn";
+    } else {
+      check.textContent = "よく録音できました。";
+      check.className = "check notice good";
+    }
+    review.classList.remove("hidden");
+    saved.classList.add("hidden");
+  };
 
-$("file-input").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  $("rec-error").textContent = "";
-  try {
-    const raw = await decodeFile(file);
-    $("rec-start").classList.add("hidden");
-    await review(raw);
-  } catch (err) {
-    console.error(err);
-    $("rec-error").textContent = "この ファイルは よめませんでした。WAV か MP3 を ためしてね。";
-  }
-});
-
-async function review(raw) {
-  const voice = await prepareVoice(raw);
-  pendingBlob = voice.blob;
-  $("rec-audio").src = URL.createObjectURL(voice.blob);
-  $("rec-time").textContent = `${voice.duration.toFixed(1)} びょう`;
-  const check = $("rec-check");
-  check.className = "notice";
-  $("rec-send").disabled = false;
-  if (voice.duration < 3) {
-    check.textContent = "みじかすぎるよ。ぶんを ぜんぶ よんでね。";
-    check.className = "notice bad";
-    $("rec-send").disabled = true;
-  } else if (voice.peak < 0.05 || voice.voiced < 0.2) {
-    check.textContent = "こえが ちいさい みたい。もうすこし おおきな こえで よむと いいよ。";
-    check.className = "notice warn";
-  } else if (voice.duration < 6) {
-    check.textContent = "すこし みじかいよ。6びょう いじょう あると もっと よく なるよ。";
-    check.className = "notice warn";
-  } else {
-    check.textContent = "じょうずに ろくおん できたよ！";
-    check.className = "notice good";
-  }
-  $("rec-review").classList.remove("hidden");
-}
-
-$("rec-redo").addEventListener("click", resetRecorderUI);
-
-$("rec-send").addEventListener("click", async () => {
-  if (!pendingBlob) return;
-  $("rec-send").disabled = true;
-  $("rec-error").textContent = "";
-  const form = new FormData();
-  form.append("file", pendingBlob, "voice.wav");
-  try {
-    await api("/api/reference", { method: "POST", body: form });
-    me = await api("/api/me");
-    renderPractice();
-  } catch (err) {
-    $("rec-send").disabled = false;
-    if (err.message !== "login") $("rec-error").textContent = err.message;
-  }
-});
-
-$("re-record").addEventListener("click", () => {
-  if (confirm("こえを とりなおすと、いまの おんせいは つくりなおしに なります。いい？")) {
+  startBtn.addEventListener("click", async () => {
+    if (activeRecorder) return;
+    error.textContent = "";
     stopAudio();
-    openRecorder(true);
+    const rec = new Recorder((peak) => {
+      meter.firstElementChild.style.width = `${Math.min(100, peak * 140)}%`;
+    });
+    try {
+      await rec.start();
+    } catch (err) {
+      console.error(err);
+      error.textContent = "マイクが使えませんでした。ブラウザのマイクの許可を確認してください。";
+      return;
+    }
+    activeRecorder = rec;
+    startBtn.classList.add("hidden");
+    stopBtn.classList.remove("hidden");
+    meter.classList.remove("hidden");
+    review.classList.add("hidden");
+    timer = setInterval(() => {
+      const t = rec.elapsed();
+      q(".rec-time").textContent = `${t.toFixed(1)} 秒`;
+      if (t > 110) stopBtn.click();
+    }, 100);
+  });
+
+  stopBtn.addEventListener("click", async () => {
+    clearInterval(timer);
+    const rec = activeRecorder;
+    activeRecorder = null;
+    stopBtn.classList.add("hidden");
+    startBtn.classList.remove("hidden");
+    meter.classList.add("hidden");
+    q(".rec-time").textContent = "";
+    if (rec) await reviewVoice(await rec.stop());
+  });
+
+  q(".file-pick input").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    error.textContent = "";
+    try {
+      await reviewVoice(await decodeFile(file));
+    } catch (err) {
+      console.error(err);
+      error.textContent = "このファイルは読み込めませんでした。WAV か MP3 を試してください。";
+    }
+  });
+
+  review.querySelector(".redo").addEventListener("click", () => {
+    pending = null;
+    review.classList.add("hidden");
+    showSaved();
+  });
+
+  review.querySelector(".save").addEventListener("click", async (e) => {
+    if (!pending) return;
+    e.target.disabled = true;
+    error.textContent = "";
+    const form = new FormData();
+    form.append("file", pending, `sentence-${item.sentence_id}.wav`);
+    try {
+      await api(`/api/recordings/${item.sentence_id}`, { method: "POST", body: form });
+      const fresh = await api("/api/me");
+      me = fresh;
+      if (fresh.phase !== "record" || fresh.submitted) return render();
+      Object.assign(item, fresh.items.find((x) => x.sentence_id === item.sentence_id) || {});
+      // Keep the page's other cards in step with the fresh list.
+      me.items = me.items.map((x) => (x.sentence_id === item.sentence_id ? item : x));
+      pending = null;
+      review.classList.add("hidden");
+      showSaved();
+      updateRecordProgress();
+    } catch (err) {
+      e.target.disabled = false;
+      if (err.message !== "login") error.textContent = err.message;
+    }
+  });
+
+  return node;
+}
+
+$("submit").addEventListener("click", async () => {
+  if (!confirm("提出しますか？ 提出すると録り直しはできません。")) return;
+  $("submit").disabled = true;
+  $("submit-error").textContent = "";
+  try {
+    await api("/api/submit", { method: "POST" });
+    await load();
+  } catch (err) {
+    $("submit").disabled = false;
+    if (err.message !== "login") $("submit-error").textContent = err.message;
   }
 });
 
-// ---- practice ----
-
-const STATUS = {
-  done: ["できたよ", "ok"],
-  queued: ["つくって いるよ…", "wait"],
-  processing: ["つくって いるよ…", "wait"],
-  waiting: ["つくって いるよ…", "wait"],
-  reviewing: ["じゅんび ちゅう", "wait"],
-  failed: ["じゅんび ちゅう", "wait"],
-  no_reference: ["", "wait"],
-};
+// ---- school: own recording, then the model ----
 
 function stopAudio() {
   if (currentPlayer) {
@@ -231,9 +268,9 @@ function stopAudio() {
   }
 }
 
-// Play `url` repeatedly with the card's settings, read live so a change to speed or
-// repeat count applies while playing. settings.repeat = 0 means "until stopped".
-// onState(state, round) with state: "playing" | "gap" | "done".
+// Play `url` repeatedly with the card's settings, read live so a change applies while
+// playing. settings.repeat = 0 means "until stopped".
+// onState(state, round, finished): state "playing" | "gap" | "done"; finished = played to the end.
 function playRepeated(url, owner, settings, onState) {
   stopAudio();
   const audio = new Audio(url);
@@ -249,7 +286,7 @@ function playRepeated(url, owner, settings, onState) {
     stop() {
       clearTimeout(gapTimer);
       audio.pause();
-      onState("done", round);
+      onState("done", round, false);
     },
   };
   const start = () => {
@@ -259,17 +296,17 @@ function playRepeated(url, owner, settings, onState) {
     onState("playing", round);
     audio.play().catch(() => {
       if (currentPlayer === player) currentPlayer = null;
-      onState("done", round);
+      onState("done", round, false);
     });
   };
   audio.addEventListener("ended", () => {
     if (currentPlayer !== player) return;
     if (settings.repeat === 0 || round < settings.repeat) {
-      onState("gap", round);
+      onState("gap", round, true);
       gapTimer = setTimeout(start, 800); // a short pause to repeat after the voice
     } else {
       currentPlayer = null;
-      onState("done", round);
+      onState("done", round, true);
     }
   });
   currentPlayer = player;
@@ -278,7 +315,7 @@ function playRepeated(url, owner, settings, onState) {
 }
 
 function roundLabel(round, settings) {
-  return settings.repeat === 0 ? `${round}かいめ` : `${round} / ${settings.repeat}`;
+  return settings.repeat === 0 ? `${round}回目` : `${round} / ${settings.repeat}`;
 }
 
 function setupPlayerSettings(node, settings) {
@@ -287,7 +324,7 @@ function setupPlayerSettings(node, settings) {
   const apply = (rate) => {
     settings.rate = Math.round(rate * 10) / 10;
     slider.value = String(settings.rate);
-    value.textContent = `${settings.rate.toFixed(1)} ばい`;
+    value.textContent = `${settings.rate.toFixed(1)} 倍`;
     if (currentPlayer && currentPlayer.owner === node) currentPlayer.setRate(settings.rate);
   };
   slider.addEventListener("input", () => apply(Number(slider.value)));
@@ -300,127 +337,88 @@ function setupPlayerSettings(node, settings) {
   });
 }
 
-function renderPractice() {
-  show("view-practice");
-  const list = $("items");
+// Sentences whose own recording has been heard to the end, kept across re-renders.
+const heardOwn = new Set();
+
+function renderListen() {
+  show("view-listen");
+  const list = $("listen-items");
   list.innerHTML = "";
-  const tpl = $("item-tpl");
-  const pending = me.items.filter((i) => i.status !== "done").length;
-  const progress = $("progress");
-  if (me.items.length === 0) {
-    progress.textContent = "まだ れんしゅうする ぶんが ありません。せんせいの じゅんびを まってね。";
-    progress.classList.remove("hidden");
-  } else if (pending > 0) {
-    const done = me.items.length - pending;
-    progress.textContent = `AIの こえを つくって いるよ（${done} / ${me.items.length}）。できた ものから きけるよ。`;
-    progress.classList.remove("hidden");
-  } else {
-    progress.classList.add("hidden");
-  }
-
-  for (const item of me.items) {
-    const node = tpl.content.firstElementChild.cloneNode(true);
-    node.querySelector(".lang").textContent = item.lang === "en" ? "English" : "にほんご";
-    node.querySelector(".lang").classList.add(item.lang);
-    const [label, cls] = STATUS[item.status] || ["", "wait"];
-    const status = node.querySelector(".status");
-    status.textContent = label;
-    status.classList.add(cls);
-    const text = node.querySelector(".text");
-    text.textContent = item.text;
-    text.lang = item.lang;
-
-    const settings = { rate: 1, repeat: 1 };
-    setupPlayerSettings(node, settings);
-    const play = node.querySelector(".play");
-    play.disabled = !item.audio_url;
-    const playKey = `ai-${item.sentence_id}`;
-    play.addEventListener("click", () => {
-      if (currentPlayer && currentPlayer.key === playKey) {
-        stopAudio();
-        return;
-      }
-      const player = playRepeated(item.audio_url, node, settings, (state, round) => {
-        if (state === "done") play.textContent = "▶ もういちど きく";
-        else play.textContent = `■ とめる（${roundLabel(round, settings)}）`;
-      });
-      player.key = playKey;
-      logEvent("play", item.sentence_id, `rate=${settings.rate};repeat=${settings.repeat}`);
-    });
-
-    setupSelfPractice(node, item, settings);
-    list.appendChild(node);
-  }
-
-  clearTimeout(pollTimer);
-  if (pending > 0) pollTimer = setTimeout(refresh, 5000);
+  me.items.forEach((item, i) => list.appendChild(listenCard(item, i)));
+  const waiting = me.items.filter((i) => !i.model_url).length;
+  const progress = $("listen-progress");
+  progress.classList.toggle("hidden", waiting === 0);
+  progress.textContent = "お手本の音声を準備しています。少し待つと聞けるようになります。";
+  $("survey").classList.toggle("hidden", !me.survey_url);
+  $("survey-link").href = me.survey_url || "#";
+  if (waiting > 0) pollTimer = setTimeout(refresh, 10000);
 }
 
-// The child's own practice reading stays in this browser tab; it is never uploaded.
-function setupSelfPractice(node, item, settings) {
-  const recBtn = node.querySelector(".self-rec");
-  const playBtn = node.querySelector(".self-play");
-  const hint = node.querySelector(".self-hint");
-  let rec = null;
-  let url = null;
-  if (!micSupported()) {
-    node.querySelector(".practice").classList.add("hidden");
-    return;
-  }
-  recBtn.addEventListener("click", async () => {
-    if (!rec) {
-      stopAudio();
-      rec = new Recorder();
-      try {
-        await rec.start();
-      } catch (_) {
-        rec = null;
-        hint.textContent = "マイクが つかえません";
-        return;
-      }
-      recBtn.textContent = "■ とめる";
-      recBtn.classList.add("recording");
-      hint.textContent = "よんでね…";
+function listenCard(item, index) {
+  const node = $("listen-tpl").content.firstElementChild.cloneNode(true);
+  const q = (sel) => node.querySelector(sel);
+  q(".seq").textContent = `${index + 1}`;
+  q(".text").textContent = item.text;
+  q(".text").lang = item.lang;
+  const settings = { rate: 1, repeat: 1 };
+  if (me.allow_controls) setupPlayerSettings(node, settings);
+  else q(".player-settings").remove();
+
+  const ownBtn = q(".play-own");
+  const modelBtn = q(".play-model");
+  const hint = q(".hint");
+  const sid = item.sentence_id;
+
+  const refreshModel = () => {
+    if (!item.model_url) {
+      modelBtn.disabled = true;
+      hint.textContent = "お手本は準備中です。";
+    } else if (item.own_url && !heardOwn.has(sid)) {
+      modelBtn.disabled = true;
+      hint.textContent = "先に ① 自分の音読 を最後まで聞いてください。";
     } else {
-      const raw = await rec.stop();
-      rec = null;
-      recBtn.textContent = "🎤 もういちど よむ";
-      recBtn.classList.remove("recording");
-      if (url) URL.revokeObjectURL(url);
-      url = URL.createObjectURL(encodeWav(raw.samples, raw.sampleRate));
-      playBtn.classList.remove("hidden");
-      hint.textContent = "AIの こえと くらべて みよう";
-      logEvent("practice_record", item.sentence_id);
+      modelBtn.disabled = false;
+      hint.textContent = "";
     }
-  });
-  const selfKey = `self-${item.sentence_id}`;
-  playBtn.addEventListener("click", () => {
-    if (currentPlayer && currentPlayer.key === selfKey) {
-      stopAudio();
-      return;
-    }
-    const player = playRepeated(url, node, settings, (state, round) => {
-      if (state === "done") playBtn.textContent = "▶ じぶんの こえ";
-      else playBtn.textContent = `■ とめる（${roundLabel(round, settings)}）`;
+  };
+  if (!item.own_url) {
+    ownBtn.disabled = true;
+    ownBtn.textContent = "① 録音がありません";
+  }
+  refreshModel();
+
+  const wire = (btn, label, url, type) => {
+    btn.addEventListener("click", () => {
+      const key = `${type}-${sid}`;
+      if (currentPlayer && currentPlayer.key === key) return stopAudio();
+      const player = playRepeated(url, node, settings, (state, round, finished) => {
+        if (finished && type === "own" && !heardOwn.has(sid)) {
+          heardOwn.add(sid);
+          refreshModel();
+        }
+        btn.textContent = state === "done" ? label : `■ 停止（${roundLabel(round, settings)}）`;
+      });
+      player.key = key;
+      logEvent(type === "own" ? "play_own" : "play_model", sid, `rate=${settings.rate};repeat=${settings.repeat}`);
     });
-    player.key = selfKey;
-    logEvent("practice_play", item.sentence_id, `rate=${settings.rate};repeat=${settings.repeat}`);
-  });
+  };
+  if (item.own_url) wire(ownBtn, "① 自分の音読を聞く", item.own_url, "own");
+  if (item.model_url) wire(modelBtn, "② お手本を聞く", item.model_url, "model");
+  return node;
 }
+
+$("survey-link").addEventListener("click", () => logEvent("survey_open"));
 
 async function refresh() {
   try {
     const next = await api("/api/me");
-    const changed = JSON.stringify(next.items.map((i) => i.status)) !== JSON.stringify(me.items.map((i) => i.status));
+    const key = (m) => JSON.stringify([m.phase, m.submitted, m.items.map((i) => [i.recorded, i.model_url])]);
+    const changed = key(next) !== key(me);
     me = next;
-    const busy = currentPlayer !== null;
-    const recording = document.querySelector(".self-rec.recording");
-    if (!$("view-practice").classList.contains("hidden")) {
-      if (changed && !busy && !recording) renderPractice();
-      else pollTimer = setTimeout(refresh, 5000);
-    }
+    if (changed && !currentPlayer) render();
+    else if (me.phase === "listen") pollTimer = setTimeout(refresh, 10000);
   } catch (_) {
-    pollTimer = setTimeout(refresh, 10000);
+    pollTimer = setTimeout(refresh, 15000);
   }
 }
 

@@ -33,10 +33,27 @@ class XTTSEngine:
         self.device = device
         self.tts = TTS(MODEL_NAME).to(device)
 
-    def synthesize(self, text: str, lang: str, reference_wav: Path, out_wav: Path) -> None:
+    def synthesize(self, text: str, lang: str, references: list[Path], out_wav: Path) -> None:
+        # XTTS conditions on up to ~30 s of speech; several clips are combined.
+        refs, total = [], 0.0
+        for ref in references:
+            refs.append(str(ref))
+            total += _seconds(ref)
+            if total >= 30:
+                break
         self.tts.tts_to_file(
             text=text,
             language=LANGS.get(lang, "en"),
-            speaker_wav=str(reference_wav),
+            speaker_wav=refs,
             file_path=str(out_wav),
         )
+
+
+def _seconds(path: Path) -> float:
+    import wave
+
+    try:
+        with wave.open(str(path), "rb") as w:
+            return w.getnframes() / float(w.getframerate())
+    except (wave.Error, OSError, EOFError):
+        return 0.0

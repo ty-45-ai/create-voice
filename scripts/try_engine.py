@@ -1,6 +1,7 @@
 """Check that a speech engine is installed and works, without starting the web app.
 
     python scripts/try_engine.py my_voice.wav "こんにちは。きょうは いい てんき です。"
+    python scripts/try_engine.py data/recordings/P001/*.wav "I like reading books."
     python scripts/try_engine.py my_voice.wav "Hello, my name is Ken." --lang en
 """
 
@@ -19,7 +20,7 @@ from app.store import guess_lang  # noqa: E402
 def main() -> None:
     settings = load_settings()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("reference", type=Path, help="声のサンプル (WAV, 6秒以上推奨)")
+    ap.add_argument("reference", type=Path, nargs="+", help="声のサンプル (WAV。複数可。合計6秒以上推奨)")
     ap.add_argument("text", help="読み上げる文章")
     ap.add_argument("--lang", choices=["ja", "en"], help="省略時は文章から自動判定")
     ap.add_argument("--engine", choices=ENGINE_NAMES, default=settings.engine)

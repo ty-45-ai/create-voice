@@ -4,109 +4,136 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
-  <title>おんどく ボイス</title>
+  <title>音読練習</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="kid">
   <header class="topbar">
-    <span class="brand">おんどく ボイス</span>
+    <span class="brand">音読練習</span>
     <span id="who" class="who"></span>
-    <button id="logout" class="link hidden" type="button">おわる</button>
+    <button id="logout" class="link hidden" type="button">ログアウト</button>
   </header>
 
   <main>
-    <!-- 1. ログイン -->
+    <!-- ログイン -->
     <section id="view-login" class="card narrow hidden">
-      <h1>ようこそ</h1>
-      <p>せんせいから もらった ID と あいことば を いれてね。</p>
+      <h1>ログイン</h1>
+      <p>配られた ID と あいことば を入力してください。</p>
       <form id="login-form" autocomplete="off">
         <label>ID <input id="login-id" inputmode="latin" autocapitalize="characters" required></label>
         <label>あいことば <input id="login-pass" type="password" autocapitalize="off" required></label>
-        <button class="big primary" type="submit">はじめる</button>
+        <button class="big primary" type="submit">ログイン</button>
         <p id="login-error" class="error" role="alert"></p>
       </form>
     </section>
 
-    <!-- 2. 声の登録 -->
-    <section id="view-record" class="card hidden">
-      <h1>あなたの こえを ろくおん しよう</h1>
-      <ol class="steps">
-        <li>「ろくおん」を おして、したの ぶんを ゆっくり よんでね。</li>
-        <li>よみおわったら「とめる」を おしてね。</li>
-        <li>きいて みて、よければ「おくる」を おしてね。</li>
-      </ol>
-      <div id="script" class="script"></div>
-
-      <div class="recorder">
-        <div class="meter" aria-hidden="true"><div id="meter-bar"></div></div>
-        <div id="rec-time" class="rec-time">0.0 びょう</div>
-        <div class="row">
-          <button id="rec-start" class="big record" type="button">● ろくおん</button>
-          <button id="rec-stop" class="big hidden" type="button">■ とめる</button>
-        </div>
-        <div id="rec-review" class="hidden">
-          <audio id="rec-audio" controls controlsList="nodownload"></audio>
-          <p id="rec-check" class="notice"></p>
-          <div class="row">
-            <button id="rec-redo" class="big" type="button">もういちど</button>
-            <button id="rec-send" class="big primary" type="button">おくる</button>
-          </div>
-        </div>
-        <p id="rec-error" class="error" role="alert"></p>
+    <!-- 家：録音 -->
+    <section id="view-record" class="hidden">
+      <div class="card">
+        <h1>教材の音読を録音しましょう</h1>
+        <ol class="steps">
+          <li>静かな場所で、それぞれの文の「● 録音」を押して読み上げ、「■ 停止」を押します。</li>
+          <li>聞き直して、よければ「保存する」を押します。うまくいかなければ録り直せます。</li>
+          <li>すべての文を保存したら、いちばん下の「提出する」を押してください。</li>
+        </ol>
+        <p id="mic-warning" class="notice warn hidden"></p>
+        <p id="record-progress" class="notice"></p>
       </div>
-
-      <details class="upload">
-        <summary>マイクが つかえない ときは（ファイルを えらぶ）</summary>
-        <p>ろくおん した おんせい ファイル（WAV・MP3・M4A など）を えらんでね。</p>
-        <input id="file-input" type="file" accept="audio/*,.wav,.mp3,.m4a,.aac,.ogg">
-      </details>
-      <button id="rec-cancel" class="link hidden" type="button">← もどる</button>
+      <div id="record-items"></div>
+      <div class="card center">
+        <button id="submit" class="big primary" type="button" disabled>提出する</button>
+        <p class="small">提出すると録り直しはできません。</p>
+        <p id="submit-error" class="error" role="alert"></p>
+      </div>
     </section>
 
-    <!-- 3. 練習 -->
-    <section id="view-practice" class="hidden">
-      <div id="progress" class="card notice-card hidden"></div>
-      <div id="items"></div>
-      <p class="small center">
-        <button id="re-record" class="link" type="button">こえを とりなおす</button>
-      </p>
+    <!-- 家：提出後 -->
+    <section id="view-submitted" class="card narrow hidden">
+      <h1>提出が完了しました</h1>
+      <p>録音を受け取りました。学校の授業で、録音した音声とお手本を聞きます。</p>
+      <p class="small">録り直したいときは、先生に連絡してください。</p>
+    </section>
+
+    <!-- 学校：聴取 -->
+    <section id="view-listen" class="hidden">
+      <div class="card">
+        <h1>音声を聞きましょう</h1>
+        <p>それぞれの文で、<b>① 自分の音読</b> を聞いてから <b>② お手本</b> を聞いてください。</p>
+        <p id="listen-progress" class="notice hidden"></p>
+      </div>
+      <div id="listen-items"></div>
+      <div id="survey" class="card center hidden">
+        <p>すべて聞き終わったら、アンケートに答えてください。</p>
+        <a id="survey-link" class="button-link big primary" target="_blank" rel="noopener">アンケートに回答する</a>
+      </div>
+    </section>
+
+    <!-- 期間外 -->
+    <section id="view-closed" class="card narrow hidden">
+      <h1>今は利用できません</h1>
+      <p>先生の指示があるまでお待ちください。</p>
     </section>
   </main>
 
-  <template id="item-tpl">
+  <template id="record-tpl">
     <article class="card item">
       <div class="item-head">
-        <span class="lang"></span>
+        <span class="seq"></span>
         <span class="status"></span>
       </div>
       <p class="text"></p>
-      <div class="controls">
-        <button class="big primary play" type="button">▶ きく</button>
+      <div class="rec-controls">
+        <button class="big record rec-start" type="button">● 録音</button>
+        <button class="big rec-stop hidden" type="button">■ 停止</button>
+        <span class="rec-time small"></span>
+        <label class="file-pick small link-like">ファイルを選ぶ<input type="file" accept="audio/*,.wav,.mp3,.m4a" hidden></label>
       </div>
+      <div class="meter hidden" aria-hidden="true"><div class="meter-bar"></div></div>
+      <div class="review hidden">
+        <audio controls controlsList="nodownload"></audio>
+        <p class="check notice"></p>
+        <div class="row">
+          <button class="redo" type="button">録り直す</button>
+          <button class="save primary" type="button">保存する</button>
+        </div>
+      </div>
+      <div class="saved hidden">
+        <audio controls controlsList="nodownload"></audio>
+      </div>
+      <p class="error" role="alert"></p>
+    </article>
+  </template>
+
+  <template id="listen-tpl">
+    <article class="card item">
+      <div class="item-head">
+        <span class="seq"></span>
+      </div>
+      <p class="text"></p>
+      <div class="controls">
+        <button class="big play-own" type="button">① 自分の音読を聞く</button>
+        <button class="big primary play-model" type="button" disabled>② お手本を聞く</button>
+      </div>
+      <p class="hint small"></p>
       <div class="player-settings">
         <div class="setting">
-          <span class="setting-label">はやさ <b class="rate-value">1.0 ばい</b></span>
+          <span class="setting-label">速さ <b class="rate-value">1.0 倍</b></span>
           <div class="slider-row">
             <span class="small">ゆっくり</span>
-            <input class="rate" type="range" min="0.5" max="2" step="0.1" value="1" aria-label="はやさ">
-            <span class="small">はやい</span>
-            <button class="rate-reset small-btn" type="button">ふつうに もどす</button>
+            <input class="rate" type="range" min="0.5" max="2" step="0.1" value="1" aria-label="速さ">
+            <span class="small">速い</span>
+            <button class="rate-reset small-btn" type="button">元に戻す</button>
           </div>
         </div>
         <div class="setting">
-          <span class="setting-label">くりかえし</span>
-          <div class="repeat" role="group" aria-label="くりかえし">
-            <button type="button" data-repeat="1" class="on">1かい</button>
-            <button type="button" data-repeat="3">3かい</button>
-            <button type="button" data-repeat="5">5かい</button>
+          <span class="setting-label">くり返し</span>
+          <div class="repeat" role="group" aria-label="くり返し">
+            <button type="button" data-repeat="1" class="on">1回</button>
+            <button type="button" data-repeat="3">3回</button>
+            <button type="button" data-repeat="5">5回</button>
             <button type="button" data-repeat="0">ずっと</button>
           </div>
         </div>
-      </div>
-      <div class="practice">
-        <button class="self-rec" type="button">🎤 じぶんで よんで みる</button>
-        <button class="self-play hidden" type="button">▶ じぶんの こえ</button>
-        <span class="self-hint small"></span>
       </div>
     </article>
   </template>

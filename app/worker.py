@@ -88,7 +88,10 @@ class Worker:
         out = self.store.new_clip_path(clip["participant_id"])
         started = time.time()
         try:
-            engine.synthesize(clip["text"], clip["lang"], Path(clip["ref_path"]), out)
+            references = self.store.reference_paths(clip["participant_id"])
+            if not references:
+                raise RuntimeError("no recordings to use as the voice sample")
+            engine.synthesize(clip["text"], clip["lang"], references, out)
             if not out.is_file() or out.stat().st_size == 0:
                 raise RuntimeError("engine produced no audio")
             if not self.store.finish_clip(clip["id"], out, wav_seconds(out)):
