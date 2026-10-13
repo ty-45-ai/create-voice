@@ -27,6 +27,11 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=Path("try_engine_out.wav"))
     args = ap.parse_args()
 
+    missing = [str(p) for p in args.reference if not p.is_file()]
+    if missing:
+        sys.exit(f"声のサンプルが見つかりません: {', '.join(missing)}\n"
+                 "アプリで録音した data/recordings/<ID>/<番号>.wav などを指定してください。")
+
     t0 = time.time()
     engine = load_engine(args.engine, settings.device)
     print(f"engine '{engine.name}' loaded in {time.time() - t0:.1f}s")
