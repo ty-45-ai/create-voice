@@ -4,3 +4,5 @@
 coqui-tts[ja]>=0.27,<0.28
 torch>=2.2,<2.9
 torchaudio>=2.2,<2.9
+# transformers 5.x removed isin_mps_friendly, which coqui-tts 0.27 imports.
+transformers>=4.57,<5
