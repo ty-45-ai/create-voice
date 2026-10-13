@@ -25,6 +25,9 @@ def main() -> None:
     ap.add_argument("--lang", choices=["ja", "en"], help="省略時は文章から自動判定")
     ap.add_argument("--engine", choices=ENGINE_NAMES, default=settings.engine)
     ap.add_argument("--out", type=Path, default=Path("try_engine_out.wav"))
+    ap.add_argument("--expected", type=float,
+                    help="この文を読むのにかかる秒数（余分な音声を切る目安）。"
+                         "省略時、見本が1ファイルならその長さ（同じ文を読んだ録音とみなす）")
     args = ap.parse_args()
 
     missing = [str(p) for p in args.reference if not p.is_file()]
@@ -36,7 +39,14 @@ def main() -> None:
     engine = load_engine(args.engine, settings.device)
     print(f"engine '{engine.name}' loaded in {time.time() - t0:.1f}s")
     t1 = time.time()
-    engine.synthesize(args.text, args.lang or guess_lang(args.text), args.reference, args.out)
+    expected = args.expected
+    if expected is None and len(args.reference) == 1:
+        import wave
+
+        with wave.open(str(args.reference[0]), "rb") as w:
+            expected = w.getnframes() / float(w.getframerate())
+    engine.synthesize(args.text, args.lang or guess_lang(args.text), args.reference, args.out,
+                      expected_seconds=expected)
     print(f"wrote {args.out} in {time.time() - t1:.1f}s")
 
 

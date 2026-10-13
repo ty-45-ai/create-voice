@@ -11,8 +11,21 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from .postprocess import too_long, trim_tail, write_wav
+
 MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
 LANGS = {"ja": "ja", "en": "en"}
+
+# Steadier than the model's shipped defaults (temperature 0.85, repetition_penalty 2.0),
+# which on short sentences tend to repeat words after the sentence ends.
+GENERATION = {
+    "temperature": 0.65,
+    "repetition_penalty": 10.0,
+    "top_k": 30,
+    "top_p": 0.8,
+    "length_penalty": 1.0,
+}
+MAX_TAKES = 3
 
 
 class XTTSEngine:
@@ -33,7 +46,10 @@ class XTTSEngine:
         self.device = device
         self.tts = TTS(MODEL_NAME).to(device)
 
-    def synthesize(self, text: str, lang: str, references: list[Path], out_wav: Path) -> None:
+    def synthesize(self, text: str, lang: str, references: list[Path], out_wav: Path,
+                   expected_seconds: float | None = None) -> None:
+        import numpy as np
+
         # XTTS conditions on up to ~30 s of speech; several clips are combined.
         refs, total = [], 0.0
         for ref in references:
@@ -41,12 +57,20 @@ class XTTSEngine:
             total += _seconds(ref)
             if total >= 30:
                 break
-        self.tts.tts_to_file(
-            text=text,
-            language=LANGS.get(lang, "en"),
-            speaker_wav=refs,
-            file_path=str(out_wav),
-        )
+        sr = self.tts.synthesizer.output_sample_rate
+        best = None
+        for _ in range(MAX_TAKES):
+            wav = np.asarray(
+                self.tts.tts(text=text, language=LANGS.get(lang, "en"), speaker_wav=refs, **GENERATION),
+                dtype=np.float32,
+            )
+            wav = trim_tail(wav, sr, expected_seconds)
+            seconds = len(wav) / sr
+            if best is None or seconds < best[0]:
+                best = (seconds, wav)
+            if not too_long(seconds, expected_seconds):
+                break
+        write_wav(out_wav, best[1], sr)
 
 
 def _seconds(path: Path) -> float:

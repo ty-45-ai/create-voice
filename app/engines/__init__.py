@@ -9,9 +9,11 @@ from pathlib import Path
 class Engine(Protocol):
     name: str
 
-    def synthesize(self, text: str, lang: str, references: list[Path], out_wav: Path) -> None:
+    def synthesize(self, text: str, lang: str, references: list[Path], out_wav: Path,
+                   expected_seconds: float | None = None) -> None:
         """Write speech for `text` (lang 'ja' or 'en') in the voice heard in `references`
-        (the student's own recordings, longest first) to `out_wav`."""
+        (the student's own recordings, longest first) to `out_wav`. `expected_seconds` is how
+        long the student took to read this text, used to cut off extra generated speech."""
 
 
 ENGINE_NAMES = ("xtts", "chatterbox", "dummy")

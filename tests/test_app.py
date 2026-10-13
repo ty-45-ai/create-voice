@@ -233,7 +233,7 @@ def test_failed_engine_marks_clip_failed(tmp_path):
     class Broken:
         name = "broken"
 
-        def synthesize(self, *a):
+        def synthesize(self, *a, **kw):
             raise RuntimeError("boom")
 
     app = make_app(tmp_path, Broken)
@@ -279,3 +279,25 @@ def test_old_database_is_migrated(tmp_path):
         rows = admin.get("/api/admin/participants").json()
         assert rows[0]["class_name"] == "5-1" and rows[0]["condition"] == "ai"
         assert admin.post("/api/admin/sentences", json={"text": "Hi."}).status_code == 200
+
+
+def test_trim_tail_cuts_babble_after_the_sentence():
+    import numpy as np
+
+    from app.engines.postprocess import too_long, trim_tail
+
+    sr = 24000
+    t = np.arange(int(sr * 1.8)) / sr
+    speech = 0.5 * np.sin(2 * np.pi * 200 * t)          # the sentence, 1.8 s
+    gap = np.zeros(int(sr * 0.6))                       # pause after it
+    babble = 0.5 * np.sin(2 * np.pi * 300 * t[: sr // 2])  # "I, I"
+    wav = np.concatenate([speech, gap, babble, gap, babble, np.zeros(sr)]).astype(np.float32)
+
+    out = trim_tail(wav, sr, expected_seconds=2.0)
+    assert 1.8 <= len(out) / sr <= 2.1
+    # A short pause inside the sentence (before 80 % of the expected length) is kept.
+    inner = np.concatenate([speech[: sr // 2], np.zeros(int(sr * 0.5)), speech]).astype(np.float32)
+    assert len(trim_tail(inner, sr, expected_seconds=2.6)) / sr > 2.7
+    # Without an expected length only trailing silence goes.
+    assert len(trim_tail(wav, sr, None)) / sr > 3.5
+    assert too_long(5.0, 2.0) and not too_long(3.5, 2.0) and not too_long(9.0, None)

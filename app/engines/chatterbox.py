@@ -26,7 +26,8 @@ class ChatterboxEngine:
         self.device = device
         self.model = ChatterboxMultilingualTTS.from_pretrained(device=device)
 
-    def synthesize(self, text: str, lang: str, references: list[Path], out_wav: Path) -> None:
+    def synthesize(self, text: str, lang: str, references: list[Path], out_wav: Path,
+                   expected_seconds: float | None = None) -> None:
         import soundfile
 
         # Chatterbox takes a single prompt clip: use the longest recording.
