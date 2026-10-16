@@ -15,6 +15,19 @@ class Engine(Protocol):
         (the student's own recordings, longest first) to `out_wav`. `expected_seconds` is how
         long the student took to read this text, used to cut off extra generated speech."""
 
+    def synthesize_standard(self, text: str, lang: str, voice: str, out_wav: Path,
+                            expected_seconds: float | None = None) -> None:
+        """Write speech for `text` in the engine's built-in stock voice `voice` (not cloned)."""
+
+    def standard_voices(self) -> list[str]:
+        """Names of the built-in stock voices, for the admin to choose from."""
+
+
+def estimate_seconds(text: str, lang: str) -> float:
+    """Rough reading time, used to trim stock-voice output when no recording exists."""
+    per_second = 7.0 if lang == "ja" else 14.0
+    return len(text.strip()) / per_second + 0.3
+
 
 ENGINE_NAMES = ("xtts", "chatterbox", "dummy")
 

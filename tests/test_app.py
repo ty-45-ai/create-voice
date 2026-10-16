@@ -68,6 +68,7 @@ def setup_study(admin, n=2):
 def test_home_record_then_school_listen(env):
     app, admin, client = env
     ai, native = setup_study(admin, n=1)
+    admin.put("/api/admin/settings", json={"listen_after_submit": False})  # study 1: listen at school
     kid_ai, kid_native = client(), client()
     login(kid_ai, ai[0])
     login(kid_native, native[0])
@@ -94,7 +95,7 @@ def test_home_record_then_school_listen(env):
     assert progress["submitted"] == 2 and progress["ai_ready"] == 1 and progress["not_submitted"] == []
 
     # Model audio is not reachable until the class moves to the listening stage.
-    assert kid_ai.get(f"/api/model/{sid}/audio").status_code == 409
+    assert kid_ai.get(f"/api/model/{sid}/ai_self").status_code == 409
     admin.put("/api/admin/phase", json={"class_name": "3-1", "phase": "listen"})
 
     me_ai = kid_ai.get("/api/me").json()
@@ -102,17 +103,24 @@ def test_home_record_then_school_listen(env):
     assert me_ai["phase"] == "listen"
     own = kid_ai.get(me_ai["items"][0]["own_url"])
     assert own.status_code == 200 and own.content[:4] == b"RIFF"
-    model_ai = kid_ai.get(me_ai["items"][0]["model_url"])
-    model_native = kid_native.get(me_native["items"][0]["model_url"])
+    audios_ai = me_ai["items"][0]["audios"]
+    audios_native = me_native["items"][0]["audios"]
+    # One model voice each, labelled just "お手本" so the condition stays hidden.
+    assert [(a["kind"], a["label"]) for a in audios_ai] == [("own", "自分の音読"), ("ai_self", "お手本")]
+    assert [(a["kind"], a["label"]) for a in audios_native] == [("own", "自分の音読"), ("native", "お手本")]
+    model_ai = kid_ai.get(audios_ai[1]["url"])
+    model_native = kid_native.get(audios_native[1]["url"])
+    # A student cannot fetch a kind outside their condition's set.
+    assert kid_native.get(f"/api/model/{sid}/ai_self").status_code == 404
     assert model_ai.content[:4] == b"RIFF"  # AI self-voice (dummy engine WAV)
     assert model_native.content == b"ID3fake-mp3"  # the uploaded native speaker audio
     assert model_native.headers["content-type"] == "audio/mpeg"
     # The condition itself is never sent to the student.
-    assert "condition" not in str(me_ai) and "native" not in str(me_native).replace("model", "")
+    assert "condition" not in str(me_ai)
 
-    kid_ai.post("/api/events", json={"type": "play_model", "sentence_id": sid, "detail": "rate=1.5;repeat=3"})
+    kid_ai.post("/api/events", json={"type": "play_ai_self", "sentence_id": sid, "detail": "rate=1.5;repeat=3"})
     log = admin.get("/api/admin/events.csv").text
-    assert "play_model" in log and "submit" in log and "rate=1.5;repeat=3" in log
+    assert "play_ai_self" in log and "submit" in log and "rate=1.5;repeat=3" in log
 
 
 def test_phase_per_class_and_closed(env):
@@ -156,10 +164,10 @@ def test_approval_and_controls_settings(env):
     me = kid.get("/api/me").json()
     assert me["allow_controls"] is False
     assert me["survey_url"] == f"https://forms.example/?id={ai[0]['id']}"
-    assert all(i["model_url"] is None for i in me["items"])
+    assert all(i["audios"][1]["url"] is None for i in me["items"])
     for c in admin.get("/api/admin/clips").json():
         admin.post(f"/api/admin/clips/{c['id']}/approve", json={"approved": True})
-    assert all(i["model_url"] for i in kid.get("/api/me").json()["items"])
+    assert all(i["audios"][1]["url"] for i in kid.get("/api/me").json()["items"])
 
 
 def test_reopen_and_resubmit_regenerates(env):
@@ -301,3 +309,45 @@ def test_trim_tail_cuts_babble_after_the_sentence():
     # Without an expected length only trailing silence goes.
     assert len(trim_tail(wav, sr, None)) / sr > 3.5
     assert too_long(5.0, 2.0) and not too_long(3.5, 2.0) and not too_long(9.0, None)
+
+
+def test_three_voices_and_listen_right_after_submit(env):
+    app, admin, client = env
+    ai, native = setup_study(admin, n=1)
+    # AI-condition students hear their own reading, their AI clone and the stock AI voice.
+    r = admin.put("/api/admin/settings", json={"listen_sets": {"ai": ["standard", "own", "ai_self"]},
+                                               "listen_after_submit": True})
+    assert r.status_code == 200
+    assert admin.get("/api/admin/status").json()["listen_sets"]["ai"] == ["own", "ai_self", "standard"]
+
+    kid = client()
+    login(kid, ai[0])
+    record_all(kid)
+    kid.post("/api/submit")
+    me = kid.get("/api/me").json()
+    assert me["phase"] == "listen"  # no need to wait for the class to switch
+    audios = me["items"][0]["audios"]
+    assert [(a["kind"], a["label"]) for a in audios] == [
+        ("own", "自分の音読"), ("ai_self", "AIの声（自分の声）"), ("standard", "AIの声（標準）")]
+    assert audios[0]["url"] and audios[1]["url"] is None and audios[2]["url"] is None
+
+    drain(app)  # stock voice (one per sentence) and the student's clone
+    audios = kid.get("/api/me").json()["items"][0]["audios"]
+    assert all(a["url"] for a in audios)
+    std = kid.get(audios[2]["url"])
+    assert std.status_code == 200 and std.content[:4] == b"RIFF"
+    sentences = admin.get("/api/admin/sentences").json()
+    assert {s["standard_status"] for s in sentences} == {"done"}
+
+    # Changing the stock voice re-queues every stock clip.
+    admin.put("/api/admin/settings", json={"standard_voice": "Claribel Dervla"})
+    assert {s["standard_status"] for s in admin.get("/api/admin/sentences").json()} == {"queued"}
+
+    # The native group can be given its own set too, e.g. study 2's "native only".
+    admin.put("/api/admin/settings", json={"listen_sets": {"native": ["native"]}})
+    kid2 = client()
+    login(kid2, native[0])
+    record_all(kid2)
+    kid2.post("/api/submit")
+    audios = kid2.get("/api/me").json()["items"][0]["audios"]
+    assert [(a["kind"], a["label"]) for a in audios] == [("native", "お手本")]

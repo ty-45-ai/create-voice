@@ -110,7 +110,7 @@
         </div>
         <div class="card">
           <h2>教材一覧</h2>
-          <p class="small">ネイティブ条件の生徒には、各文の「ネイティブ音声」がお手本として流れます。文を変更すると、その文のAI音声はつくり直されます。</p>
+          <p class="small">ネイティブ音声はアップロードしたもの、標準AI音声は文を追加すると自動で作られます（全員共通）。文を変更すると、その文のAI音声はつくり直されます。</p>
           <div class="table-wrap"><table id="sentences-table"></table></div>
           <input id="native-file" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg" hidden>
         </div>
@@ -141,7 +141,20 @@
       <!-- 設定・出力 -->
       <div id="tab-settings" class="tab hidden">
         <div class="card">
+          <h2>生徒が聞ける音声</h2>
+          <p class="small">条件ごとに、聴取画面に並べる音声を選びます（左から順に表示）。「自分の音読」を含めると、ほかの音声は自分の音読を最後まで聞いてから押せるようになります。お手本が1種類だけのときは、生徒には「お手本」とだけ表示されます。</p>
+          <div class="table-wrap"><table id="listen-matrix"></table></div>
+          <div class="inline-form" style="margin-top:12px">
+            <label>標準AI音声の声（XTTS-v2 の内蔵ボイス）
+              <input id="standard-voice" list="standard-voice-list" placeholder="Ana Florence">
+              <datalist id="standard-voice-list"></datalist>
+            </label>
+          </div>
+          <p class="small">声の候補はモデルの読み込み後に表示されます。変更すると、標準AI音声は全文つくり直されます。</p>
+        </div>
+        <div class="card">
           <h2>聴取画面の設定</h2>
+          <label class="check-row"><input id="listen-after-submit" type="checkbox"> 提出したらすぐに聞けるようにする（オフにすると、クラスを「聴取」に切り替えるまで聞けません。研究1の学校での聴取ではオフ）</label>
           <label class="check-row"><input id="allow-controls" type="checkbox"> 生徒が速さ（0.5〜2.0倍）とくり返しを変えられるようにする</label>
           <label class="check-row"><input id="require-approval" type="checkbox"> AI音声は研究者が承認してから生徒に公開する</label>
           <label>練習後アンケートのURL（空欄なら表示しない。<code>{id}</code> は参加者IDに置き換わります）

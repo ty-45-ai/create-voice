@@ -25,7 +25,16 @@ class DummyEngine:
                 raise FileNotFoundError(ref)
         if self.delay:
             time.sleep(self.delay)
-        base = 330.0 if lang == "ja" else 440.0
+        self._tones(text, 330.0 if lang == "ja" else 440.0, out_wav)
+
+    def synthesize_standard(self, text: str, lang: str, voice: str, out_wav: Path,
+                            expected_seconds: float | None = None) -> None:
+        self._tones(text, 520.0, out_wav)
+
+    def standard_voices(self) -> list[str]:
+        return ["Dummy Voice"]
+
+    def _tones(self, text: str, base: float, out_wav: Path) -> None:
         frames = bytearray()
         for i, ch in enumerate(text.strip()[:200]):
             if ch.isspace():

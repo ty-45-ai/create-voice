@@ -19,6 +19,8 @@ const STATUS_LABEL = { done: "完了", queued: "待機中", processing: "生成�
 const LANG_LABEL = { ja: "日本語", en: "英語" };
 const CONDITION_LABEL = { ai: "AI自己音声", native: "ネイティブ" };
 const PHASE_LABEL = { record: "録音", listen: "聴取", closed: "停止" };
+const KIND_LABEL = { own: "自分の音読", ai_self: "AI自己音声（クローン）", standard: "標準AI音声", native: "ネイティブ音声" };
+const needsAi = (condition) => !!status && (status.listen_sets[condition] || []).includes("ai_self");
 
 async function api(path, opts = {}) {
   const init = { credentials: "same-origin", ...opts };
@@ -150,8 +152,8 @@ async function loadProgress() {
         })),
         h("td", { class: "num" }, `${c.total}（${c.ai} / ${c.native}）`),
         h("td", { class: "num" }, `${c.submitted} / ${c.total}`),
-        h("td", { class: "num" }, `${c.ai_ready} / ${c.ai}`,
-          c.ai && c.ai_ready === c.ai ? h("span", { class: "badge done" }, " 全員分そろっています") : ""),
+        h("td", { class: "num" }, c.ai_needed ? `${c.ai_ready} / ${c.ai_needed}` : "—",
+          c.ai_needed && c.ai_ready === c.ai_needed ? h("span", { class: "badge done" }, " 全員分そろっています") : ""),
         h("td", { class: "mono small" }, c.not_submitted.join(", ") || "—"),
         h("td", { class: "mono small" }, c.ai_waiting.join(", ") || "—"),
       ),
@@ -215,7 +217,7 @@ async function loadParticipants() {
   const sel = $("clip-participant");
   const keep = sel.value;
   sel.replaceChildren(h("option", { value: "" }, "すべて"),
-    ...rows.filter((p) => p.condition === "ai").map((p) => h("option", { value: p.id }, p.id)));
+    ...rows.filter((p) => needsAi(p.condition)).map((p) => h("option", { value: p.id }, p.id)));
   sel.value = keep;
 
   const table = $("participants-table");
@@ -229,7 +231,7 @@ async function loadParticipants() {
         h("td", { class: "num" }, `${p.recorded} / ${total}`,
           p.recorded ? [" ", h("button", { onclick: () => showRecordings(p) }, "聞く")] : ""),
         h("td", { class: "small" }, p.submitted_at || "未提出"),
-        h("td", { class: "num" }, p.condition === "ai" ? `${p.clip_done} / ${p.submitted_at ? total : 0}` : "—",
+        h("td", { class: "num" }, needsAi(p.condition) ? `${p.clip_done} / ${p.submitted_at ? total : 0}` : "—",
           p.clip_failed ? h("span", { class: "badge failed" }, ` 失敗 ${p.clip_failed}`) : ""),
         h("td", { class: "small" }, p.last_activity || "—"),
         h("td", {},
@@ -334,7 +336,7 @@ async function loadSentences() {
   const rows = await api("/api/admin/sentences");
   const table = $("sentences-table");
   table.replaceChildren(
-    h("tr", {}, ["順番", "文", "言語", "ネイティブ音声", "公開", "操作"].map((t) => h("th", {}, t))),
+    h("tr", {}, ["順番", "文", "言語", "ネイティブ音声", "標準AI音声", "公開", "操作"].map((t) => h("th", {}, t))),
     ...rows.map((s) =>
       h("tr", { class: s.active ? "" : "inactive" },
         h("td", { class: "num" }, s.sort_order),
@@ -351,6 +353,16 @@ async function loadSentences() {
               : [h("span", { class: "badge failed" }, "未登録"), h("button", { onclick: () => pickNative(s.id) }, "アップロード")],
           ),
         ),
+        h("td", {},
+          h("div", { class: "actions" },
+            h("span", { class: `badge ${s.standard_status || ""}` }, STATUS_LABEL[s.standard_status] || "—"),
+            s.standard_status === "done"
+              ? h("button", { onclick: () => preview(`/api/admin/sentences/${s.id}/standard?t=${Date.now()}`) }, "試聴")
+              : null,
+            h("button", { onclick: () => regenerateStandard(s) }, "再生成"),
+          ),
+          s.standard_error ? h("div", { class: "err-text" }, s.standard_error) : "",
+        ),
         h("td", {}, s.active ? "公開" : "非公開"),
         h("td", {},
           h("div", { class: "actions" },
@@ -363,7 +375,12 @@ async function loadSentences() {
       ),
     ),
   );
-  if (!rows.length) emptyRow(table, 6, "まだ教材がありません。");
+  if (!rows.length) emptyRow(table, 7, "まだ教材がありません。");
+}
+
+async function regenerateStandard(s) {
+  await api(`/api/admin/sentences/${s.id}/standard/regenerate`, { method: "POST" });
+  loadSentences();
 }
 
 async function patchSentence(id, body) {
@@ -465,7 +482,30 @@ async function loadSettings() {
   await loadStatus();
   $("allow-controls").checked = status.allow_controls;
   $("require-approval").checked = status.require_approval;
+  $("listen-after-submit").checked = status.listen_after_submit;
   $("survey-url").value = status.survey_url;
+  $("standard-voice").value = status.standard_voice;
+  $("standard-voice-list").replaceChildren(...status.standard_voices.map((v) => h("option", { value: v })));
+  $("listen-matrix").replaceChildren(
+    h("tr", {}, h("th", {}, "条件"), ...Object.values(KIND_LABEL).map((t) => h("th", {}, t))),
+    ...Object.entries(CONDITION_LABEL).map(([cond, label]) =>
+      h("tr", {},
+        h("td", {}, `${label}の生徒`),
+        ...Object.keys(KIND_LABEL).map((kind) =>
+          h("td", {}, h("input", {
+            type: "checkbox", class: "listen-kind", "data-cond": cond, "data-kind": kind,
+            checked: (status.listen_sets[cond] || []).includes(kind),
+          }))),
+      )),
+  );
+}
+
+function readListenSets() {
+  const sets = { ai: [], native: [] };
+  document.querySelectorAll(".listen-kind").forEach((el) => {
+    if (el.checked) sets[el.dataset.cond].push(el.dataset.kind);
+  });
+  return sets;
 }
 
 $("save-settings").addEventListener("click", async () => {
@@ -474,7 +514,10 @@ $("save-settings").addEventListener("click", async () => {
     json: {
       allow_controls: $("allow-controls").checked,
       require_approval: $("require-approval").checked,
+      listen_after_submit: $("listen-after-submit").checked,
       survey_url: $("survey-url").value,
+      standard_voice: $("standard-voice").value.trim() || status.standard_voice,
+      listen_sets: readListenSets(),
     },
   });
   await loadStatus();

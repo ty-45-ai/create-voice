@@ -23,7 +23,8 @@ from pydantic import BaseModel, Field
 from . import auth
 from .config import Settings, load_settings
 from .engines import load_engine
-from .store import CONDITIONS, NATIVE_EXTENSIONS, PARTICIPANT_ID_RE, Store, balanced_conditions, guess_lang
+from .store import (AUDIO_KINDS, CONDITIONS, NATIVE_EXTENSIONS, PARTICIPANT_ID_RE, Store, balanced_conditions,
+                    guess_lang)
 from .worker import Worker
 
 log = logging.getLogger("ondoku")
@@ -46,7 +47,7 @@ class AdminLoginBody(BaseModel):
 
 
 class EventBody(BaseModel):
-    type: Literal["play_own", "play_model", "survey_open"]
+    type: Literal["play_own", "play_ai_self", "play_standard", "play_native", "play_model", "survey_open"]
     sentence_id: int | None = None
     detail: str = Field(default="", max_length=200)
 
@@ -93,7 +94,10 @@ class PhaseBody(BaseModel):
 class SettingsBody(BaseModel):
     require_approval: bool | None = None
     allow_controls: bool | None = None
+    listen_after_submit: bool | None = None
     survey_url: str | None = Field(default=None, max_length=2000)
+    standard_voice: str | None = Field(default=None, min_length=1, max_length=100)
+    listen_sets: dict[Literal["ai", "native"], list[Literal["own", "ai_self", "standard", "native"]]] | None = None
 
 
 # ---- helpers -----------------------------------------------------------------
@@ -155,17 +159,39 @@ def ensure_admin_password(store: Store, settings: Settings) -> None:
     log.warning("管理者パスワードを生成しました: %s （%s にも保存。ログイン後に削除してください）", password, note)
 
 
-def model_audio(store: Store, participant, item: dict) -> str | None:
-    """Path of the model voice this student hears for a sentence, or None if not ready.
-    'ai' -> their AI self-voice clip; 'native' -> the uploaded native speaker audio."""
-    if participant["condition"] == "native":
+AUDIO_LABELS = {
+    "own": "自分の音読",
+    "ai_self": "AIの声（自分の声）",
+    "standard": "AIの声（標準）",
+    "native": "ネイティブの音声",
+}
+
+
+def audio_path(store: Store, item: dict, kind: str) -> str | None:
+    """File behind one of the sounds a student can hear for a sentence, or None if not ready."""
+    if kind == "own":
+        return item.get("own_path")
+    if kind == "native":
         return item["native_path"]
-    if item["clip_status"] != "done":
-        return None
-    if store.require_approval() and not item["approved"]:
-        return None
-    clip = store.get_clip(item["clip_id"])
-    return clip["path"] if clip else None
+    if kind == "standard":
+        return item["standard_path"] if item["standard_status"] == "done" else None
+    if kind == "ai_self":
+        if item["clip_status"] != "done":
+            return None
+        if store.require_approval() and not item["approved"]:
+            return None
+        clip = store.get_clip(item["clip_id"])
+        return clip["path"] if clip else None
+    return None
+
+
+def labels_for(kinds: list[str]) -> dict[str, str]:
+    """With a single model voice (study 1) it is just 'お手本', so the condition stays hidden."""
+    models = [k for k in kinds if k != "own"]
+    out = {k: AUDIO_LABELS[k] for k in kinds}
+    if len(models) == 1:
+        out[models[0]] = "お手本"
+    return out
 
 
 # ---- app ---------------------------------------------------------------------
@@ -275,23 +301,40 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         response.delete_cookie(auth.COOKIE_NAME, path="/")
         return {"ok": True}
 
+    def items_with_paths(p) -> list[dict]:
+        items = store.items_for(p["id"])
+        for it in items:
+            rec = store.get_recording(p["id"], it["sentence_id"]) if it["recorded_seconds"] is not None else None
+            it["own_path"] = rec["path"] if rec else None
+        return items
+
     @app.get("/api/me")
     def me(p=Depends(participant)):
-        phase = store.phase_for(p["class_name"])
+        phase = store.effective_phase(p)
+        kinds = store.listen_set(p["condition"])
+        labels = labels_for(kinds)
         items = []
         if phase != "closed":
-            for it in store.items_for(p["id"]):
+            for it in items_with_paths(p):
+                sid = it["sentence_id"]
                 recorded = it["recorded_seconds"] is not None
                 entry = {
-                    "sentence_id": it["sentence_id"],
+                    "sentence_id": sid,
                     "text": it["text"],
                     "lang": it["lang"],
                     "recorded": recorded,
-                    "own_url": f"/api/recordings/{it['sentence_id']}/audio?v={int(it['recorded_at'])}" if recorded else None,
+                    "own_url": f"/api/recordings/{sid}/audio?v={int(it['recorded_at'])}" if recorded else None,
                 }
                 if phase == "listen":
-                    ready = model_audio(store, p, it) is not None
-                    entry["model_url"] = f"/api/model/{it['sentence_id']}/audio" if ready else None
+                    entry["audios"] = [
+                        {
+                            "kind": k,
+                            "label": labels[k],
+                            "url": (entry["own_url"] if k == "own" else f"/api/model/{sid}/{k}")
+                            if audio_path(store, it, k) else None,
+                        }
+                        for k in kinds
+                    ]
                 items.append(entry)
         survey = store.get_setting("survey_url") or ""
         return {
@@ -336,13 +379,16 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         worker.wake()
         return {"ok": True}
 
-    @app.get("/api/model/{sid}/audio")
-    def model_voice(sid: int, p=Depends(participant)):
-        require_phase(p, "listen")
-        item = next((i for i in store.items_for(p["id"]) if i["sentence_id"] == sid), None)
-        path = model_audio(store, p, item) if item else None
+    @app.get("/api/model/{sid}/{kind}")
+    def model_voice(sid: int, kind: str, p=Depends(participant)):
+        if store.effective_phase(p) != "listen":
+            raise HTTPException(409, "今はこの操作はできません。画面を読み込み直してください")
+        if kind not in AUDIO_KINDS or kind == "own" or kind not in store.listen_set(p["condition"]):
+            raise HTTPException(404, "音声がありません")
+        item = next((i for i in items_with_paths(p) if i["sentence_id"] == sid), None)
+        path = audio_path(store, item, kind) if item else None
         if path is None:
-            raise HTTPException(404, "お手本はまだ準備中です")
+            raise HTTPException(404, "音声はまだ準備中です")
         return audio_response(path)
 
     @app.post("/api/events")
@@ -380,6 +426,10 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
             "survey_url": store.get_setting("survey_url") or "",
             "default_phase": store.get_setting("phase") or "record",
             "sentence_count": store.active_sentence_count(),
+            "listen_after_submit": store.flag("listen_after_submit"),
+            "standard_voice": store.get_setting("standard_voice") or "",
+            "standard_voices": worker.standard_voices(),
+            "listen_sets": {c: store.listen_set(c) for c in CONDITIONS},
         }
 
     @app.get("/api/admin/progress")
@@ -502,8 +552,12 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
     @app.get("/api/admin/sentences")
     def list_sentences(_=Depends(admin)):
         rows = store.list_sentences()
+        std = store.standard_status()
         for r in rows:
             r["has_native"] = bool(r.pop("native_path"))
+            s = std.get(r["id"])
+            r["standard_status"] = s["status"] if s else None
+            r["standard_error"] = (s["error"] or "").split("\n")[0] if s else ""
         return rows
 
     @app.post("/api/admin/sentences")
@@ -550,6 +604,17 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         store.clear_native_audio(sid)
         return {"ok": True}
 
+    @app.get("/api/admin/sentences/{sid}/standard")
+    def standard_audio(sid: int, _=Depends(admin)):
+        s = store.get_standard(sid)
+        return audio_response(s["path"] if s and s["status"] == "done" else None)
+
+    @app.post("/api/admin/sentences/{sid}/standard/regenerate")
+    def regenerate_standard(sid: int, _=Depends(admin)):
+        store.requeue_standard(sid)
+        worker.wake()
+        return {"ok": True}
+
     @app.get("/api/admin/sentences/{sid}/native")
     def native_audio(sid: int, _=Depends(admin)):
         s = store.get_sentence(sid)
@@ -579,7 +644,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
 
     @app.post("/api/admin/clips/regenerate-all")
     def regenerate_all(_=Depends(admin)):
-        count = store.requeue_all_clips()
+        count = store.requeue_all_clips() + store.requeue_standard()
         worker.wake()
         return {"count": count}
 
@@ -606,6 +671,16 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
             store.set_setting("require_approval", "1" if body.require_approval else "0")
         if body.allow_controls is not None:
             store.set_setting("allow_controls", "1" if body.allow_controls else "0")
+        if body.listen_after_submit is not None:
+            store.set_setting("listen_after_submit", "1" if body.listen_after_submit else "0")
+        if body.listen_sets is not None:
+            for cond, kinds in body.listen_sets.items():
+                store.set_listen_set(cond, list(kinds))
+            worker.wake()
+        if body.standard_voice is not None and body.standard_voice.strip() != store.get_setting("standard_voice"):
+            store.set_setting("standard_voice", body.standard_voice.strip())
+            store.requeue_standard()
+            worker.wake()
         if body.survey_url is not None:
             url = body.survey_url.strip()
             if url and not url.startswith(("https://", "http://")):

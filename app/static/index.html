@@ -58,7 +58,7 @@
     <section id="view-listen" class="hidden">
       <div class="card">
         <h1>音声を聞きましょう</h1>
-        <p>それぞれの文で、<b>① 自分の音読</b> を聞いてから <b>② お手本</b> を聞いてください。</p>
+        <p id="listen-guide">それぞれの文で、<b>① 自分の音読</b> を聞いてから、ほかの音声を聞いてください。</p>
         <p id="listen-progress" class="notice hidden"></p>
       </div>
       <div id="listen-items"></div>
@@ -110,10 +110,7 @@
         <span class="seq"></span>
       </div>
       <p class="text"></p>
-      <div class="controls">
-        <button class="big play-own" type="button">① 自分の音読を聞く</button>
-        <button class="big primary play-model" type="button" disabled>② お手本を聞く</button>
-      </div>
+      <div class="controls audio-buttons"></div>
       <p class="hint small"></p>
       <div class="player-settings">
         <div class="setting">

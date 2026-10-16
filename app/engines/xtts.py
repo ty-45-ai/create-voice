@@ -48,8 +48,6 @@ class XTTSEngine:
 
     def synthesize(self, text: str, lang: str, references: list[Path], out_wav: Path,
                    expected_seconds: float | None = None) -> None:
-        import numpy as np
-
         # XTTS conditions on up to ~30 s of speech; several clips are combined.
         refs, total = [], 0.0
         for ref in references:
@@ -57,13 +55,25 @@ class XTTSEngine:
             total += _seconds(ref)
             if total >= 30:
                 break
+        self._generate(out_wav, expected_seconds, text=text, language=LANGS.get(lang, "en"), speaker_wav=refs)
+
+    def synthesize_standard(self, text: str, lang: str, voice: str, out_wav: Path,
+                            expected_seconds: float | None = None) -> None:
+        voices = self.standard_voices()
+        if voices and voice not in voices:
+            raise ValueError(f"標準の声「{voice}」はありません。候補: {', '.join(voices[:8])} など")
+        self._generate(out_wav, expected_seconds, text=text, language=LANGS.get(lang, "en"), speaker=voice)
+
+    def standard_voices(self) -> list[str]:
+        return list(self.tts.speakers or [])
+
+    def _generate(self, out_wav: Path, expected_seconds: float | None, **inputs) -> None:
+        import numpy as np
+
         sr = self.tts.synthesizer.output_sample_rate
         best = None
         for _ in range(MAX_TAKES):
-            wav = np.asarray(
-                self.tts.tts(text=text, language=LANGS.get(lang, "en"), speaker_wav=refs, **GENERATION),
-                dtype=np.float32,
-            )
+            wav = np.asarray(self.tts.tts(**inputs, **GENERATION), dtype=np.float32)
             wav = trim_tail(wav, sr, expected_seconds)
             seconds = len(wav) / sr
             if best is None or seconds < best[0]:

@@ -166,3 +166,6 @@ a.button-link { display: inline-block; text-decoration: none; padding: 14px 22px
 .check-row { display: flex; gap: 8px; align-items: center; font-weight: 400; }
 .check-row input { width: auto; display: inline; margin: 0; }
 tr.inactive td { opacity: 0.55; }
+#listen-matrix input { width: auto; display: inline; margin: 0; }
+#listen-matrix td, #listen-matrix th { text-align: center; }
+#listen-matrix td:first-child { text-align: left; }
