@@ -31,7 +31,7 @@ log = logging.getLogger("ondoku")
 STATIC_DIR = Path(__file__).parent / "static"
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
 MIN_RECORDING_SECONDS = 0.5
-MAX_RECORDING_SECONDS = 180.0
+MAX_RECORDING_SECONDS = 300.0
 MIN_VOICE_SAMPLE_SECONDS = 3.0
 
 
@@ -70,13 +70,13 @@ class UpdateParticipantBody(BaseModel):
 
 
 class SentenceBody(BaseModel):
-    text: str = Field(min_length=1, max_length=1000)
+    text: str = Field(min_length=1, max_length=5000)
     lang: Literal["auto", "ja", "en"] = "auto"
     sort_order: int | None = None
 
 
 class SentenceUpdateBody(BaseModel):
-    text: str | None = Field(default=None, min_length=1, max_length=1000)
+    text: str | None = Field(default=None, min_length=1, max_length=5000)
     lang: Literal["auto", "ja", "en"] | None = None
     sort_order: int | None = None
     active: bool | None = None

@@ -306,13 +306,40 @@ async function removeParticipant(p) {
 
 // ---- sentences ----
 
+// A blank line separates practice items; single line breaks stay inside one item.
+const splitItems = (value) =>
+  value.replace(/\r/g, "").split(/\n\s*\n/).map((s) => s.replace(/[ \t]+$/gm, "").trim()).filter(Boolean);
+
+let editingSentence = null;
+
+function stopEditing() {
+  editingSentence = null;
+  $("sentence-text").value = "";
+  $("sentence-form-title").textContent = "教材を追加";
+  $("sentence-submit").textContent = "追加";
+  $("sentence-cancel").classList.add("hidden");
+}
+
+$("sentence-cancel").addEventListener("click", stopEditing);
+
 $("sentence-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const lines = $("sentence-text").value.split("\n").map((s) => s.trim()).filter(Boolean);
-  for (const text of lines) {
-    await api("/api/admin/sentences", { json: { text, lang: $("sentence-lang").value } });
+  const items = splitItems($("sentence-text").value);
+  if (!items.length) return;
+  if (editingSentence) {
+    if (items.length > 1) return alert("編集中は空行を入れられません（ひとつの練習として保存します）。");
+    if (items[0] !== editingSentence.text) {
+      await api(`/api/admin/sentences/${editingSentence.id}`, {
+        method: "PATCH", json: { text: items[0], lang: $("sentence-lang").value },
+      });
+    }
+    stopEditing();
+  } else {
+    for (const text of items) {
+      await api("/api/admin/sentences", { json: { text, lang: $("sentence-lang").value } });
+    }
+    $("sentence-text").value = "";
   }
-  $("sentence-text").value = "";
   loadSentences();
 });
 
@@ -340,7 +367,7 @@ async function loadSentences() {
     ...rows.map((s) =>
       h("tr", { class: s.active ? "" : "inactive" },
         h("td", { class: "num" }, s.sort_order),
-        h("td", { lang: s.lang }, s.text),
+        h("td", { lang: s.lang, class: "pre" }, s.text),
         h("td", {}, LANG_LABEL[s.lang] || s.lang),
         h("td", {},
           h("div", { class: "actions" },
@@ -388,10 +415,15 @@ async function patchSentence(id, body) {
   loadSentences();
 }
 
-async function editSentence(s) {
-  const text = prompt("文を編集（変更するとその文のAI音声はつくり直されます）", s.text);
-  if (text === null || !text.trim() || text.trim() === s.text) return;
-  patchSentence(s.id, { text: text.trim(), lang: "auto" });
+function editSentence(s) {
+  editingSentence = s;
+  $("sentence-text").value = s.text;
+  $("sentence-lang").value = s.lang;
+  $("sentence-form-title").textContent = `教材を編集（${s.sort_order}番）— 変更するとこの練習のAI音声はつくり直されます`;
+  $("sentence-submit").textContent = "更新";
+  $("sentence-cancel").classList.remove("hidden");
+  $("sentence-form").scrollIntoView({ behavior: "smooth" });
+  $("sentence-text").focus();
 }
 
 async function moveSentence(s) {

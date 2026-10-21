@@ -18,11 +18,13 @@ import hashlib
 import json
 import logging
 import os
+import tempfile
 import time
 import uuid
-import wave
 from pathlib import Path
 from urllib import error, request
+
+from .samples import build_samples, write_clip
 
 log = logging.getLogger("ondoku.voicebox")
 
@@ -30,8 +32,6 @@ PROFILE_PREFIX = "ondoku-"
 STANDARD_PREFIX = "ondoku-standard-"
 PRESET_ENGINES = ("kokoro", "qwen_custom_voice")
 LANGS = {"ja": "ja", "en": "en"}
-MAX_SAMPLE_SECONDS = 30.0
-MAX_SAMPLES = 6
 
 
 class VoiceboxError(RuntimeError):
@@ -83,13 +83,13 @@ class VoiceboxEngine:
             return payload
         return json.loads(payload) if payload else None
 
-    def _upload_sample(self, profile_id: str, path: Path, reference_text: str) -> None:
+    def _upload_sample(self, profile_id: str, audio: bytes, reference_text: str) -> None:
         boundary = uuid.uuid4().hex
         parts = [
             f'--{boundary}\r\nContent-Disposition: form-data; name="reference_text"\r\n\r\n'.encode()
             + reference_text.encode("utf-8") + b"\r\n",
-            f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{path.name}"\r\n'
-            f"Content-Type: audio/wav\r\n\r\n".encode() + path.read_bytes() + b"\r\n",
+            f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="sample.wav"\r\n'
+            f"Content-Type: audio/wav\r\n\r\n".encode() + audio + b"\r\n",
             f"--{boundary}--\r\n".encode(),
         ]
         self._call("POST", f"/profiles/{profile_id}/samples", data=b"".join(parts),
@@ -120,18 +120,11 @@ class VoiceboxEngine:
         """One profile per student and set of recordings; re-recording makes a fresh one and
         the student's older profiles are removed."""
         student = references[0].parent.name
-        chosen, total = [], 0.0
-        for ref, text in zip(references, texts):
-            if not text or not ref.is_file():
-                continue
-            chosen.append((ref, text))
-            total += _seconds(ref)
-            if total >= MAX_SAMPLE_SECONDS or len(chosen) >= MAX_SAMPLES:
-                break
-        if not chosen:
+        recordings = [(Path(r), t) for r, t in zip(references, texts) if t and Path(r).is_file()]
+        if not recordings:
             raise VoiceboxError("見本にできる録音がありません")
         digest = hashlib.sha1(
-            "|".join(f"{p}:{p.stat().st_mtime_ns}:{t}" for p, t in chosen).encode()
+            "|".join(f"{p}:{p.stat().st_mtime_ns}:{t}" for p, t in recordings).encode()
         ).hexdigest()[:10]
         name = f"{PROFILE_PREFIX}{student}-{digest}"
         found = self._find_profile(name)
@@ -147,8 +140,15 @@ class VoiceboxEngine:
             "voice_type": "cloned",
         })
         try:
-            for ref, text in chosen:
-                self._upload_sample(created["id"], ref, text)
+            # Voicebox accepts 2-30 s per sample: join short readings, cut long passages.
+            samples = build_samples(recordings)
+            if not samples:
+                raise VoiceboxError("見本の録音が短すぎます（合計3秒以上、はっきり読んだ録音が必要です）")
+            with tempfile.TemporaryDirectory() as tmp:
+                for i, clip in enumerate(samples):
+                    path = Path(tmp) / f"{i}.wav"
+                    write_clip(clip, path)
+                    self._upload_sample(created["id"], path.read_bytes(), clip.text)
         except VoiceboxError:
             self._delete_profile(created["id"])
             raise
@@ -239,10 +239,3 @@ class VoiceboxEngine:
     def default_standard_voice(self) -> str:
         return "kokoro:af_heart"
 
-
-def _seconds(path: Path) -> float:
-    try:
-        with wave.open(str(path), "rb") as w:
-            return w.getnframes() / float(w.getframerate())
-    except (wave.Error, OSError, EOFError):
-        return 0.0

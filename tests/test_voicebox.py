@@ -151,7 +151,8 @@ def test_clone_generate_and_cleanup(voicebox, tmp_path):
     assert out.read_bytes()[:4] == b"RIFF"
     (profile,) = state.profiles.values()
     assert profile["name"].startswith("ondoku-P001-") and profile["voice_type"] == "cloned"
-    assert sorted(t for _, t in state.samples[profile["id"]]) == ["I like reading books.", "My favorite color is blue."]
+    # Two 2-second readings are too short for Voicebox (2 s minimum) alone, so they are joined.
+    assert [t for _, t in state.samples[profile["id"]]] == ["I like reading books. My favorite color is blue."]
     assert state.generations == {}  # removed from Voicebox history after download
 
     # Same recordings: the profile is reused, not duplicated.

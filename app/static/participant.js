@@ -141,7 +141,7 @@ function recordCard(item, index, supported) {
   if (!supported) startBtn.classList.add("hidden");
 
   const reviewVoice = async (raw) => {
-    const voice = await prepareVoice(raw, 120);
+    const voice = await prepareVoice(raw, 300);
     pending = voice.blob;
     review.querySelector("audio").src = URL.createObjectURL(voice.blob);
     const check = review.querySelector(".check");
@@ -184,7 +184,7 @@ function recordCard(item, index, supported) {
     timer = setInterval(() => {
       const t = rec.elapsed();
       q(".rec-time").textContent = `${t.toFixed(1)} 秒`;
-      if (t > 110) stopBtn.click();
+      if (t > 290) stopBtn.click(); // the server accepts up to 5 minutes
     }, 100);
   });
 

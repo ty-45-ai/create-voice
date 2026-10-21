@@ -169,3 +169,6 @@ tr.inactive td { opacity: 0.55; }
 #listen-matrix input { width: auto; display: inline; margin: 0; }
 #listen-matrix td, #listen-matrix th { text-align: center; }
 #listen-matrix td:first-child { text-align: left; }
+
+/* practice passages keep their line breaks */
+.item .text, td.pre { white-space: pre-wrap; }

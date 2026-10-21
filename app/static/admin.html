@@ -93,9 +93,11 @@
       <!-- 教材 -->
       <div id="tab-sentences" class="tab hidden">
         <div class="card">
-          <h2>教材の文を追加</h2>
+          <h2 id="sentence-form-title">教材を追加</h2>
           <form id="sentence-form">
-            <label>文（1行に1文。複数行で一括追加） <textarea id="sentence-text" required></textarea></label>
+            <label>練習する文章
+              <span class="small">（改行してもひとつの練習になります。<b>空行で区切ると、別々の練習</b>として追加されます）</span>
+              <textarea id="sentence-text" rows="6" required></textarea></label>
             <div class="inline-form">
               <label>言語
                 <select id="sentence-lang">
@@ -104,7 +106,8 @@
                   <option value="ja">日本語</option>
                 </select>
               </label>
-              <button class="primary" type="submit">追加</button>
+              <button id="sentence-submit" class="primary" type="submit">追加</button>
+              <button id="sentence-cancel" class="hidden" type="button">編集をやめる</button>
             </div>
           </form>
         </div>
