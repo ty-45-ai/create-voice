@@ -10,7 +10,9 @@ import threading
 import time
 
 PASSCODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"  # no 0/o, 1/l/i
-COOKIE_NAME = "ondoku_session"
+# Separate cookies, so a researcher can be logged in as admin and as a test student
+# in the same browser without one login replacing the other.
+COOKIE_NAMES = {"participant": "ondoku_session", "admin": "ondoku_admin"}
 PARTICIPANT_TTL = 60 * 60 * 24 * 60  # 60 days: children should not need to log in every time
 ADMIN_TTL = 60 * 60 * 12
 

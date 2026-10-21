@@ -225,14 +225,14 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         response.headers.setdefault("Permissions-Policy", "microphone=(self)")
         return response
 
-    def set_cookie(response: Response, token: str, ttl: int) -> None:
+    def set_cookie(response: Response, role: str, token: str, ttl: int) -> None:
         response.set_cookie(
-            auth.COOKIE_NAME, token, max_age=ttl, httponly=True, samesite="strict",
+            auth.COOKIE_NAMES[role], token, max_age=ttl, httponly=True, samesite="strict",
             secure=settings.secure_cookie, path="/",
         )
 
     def session(request: Request, role: str):
-        token = request.cookies.get(auth.COOKIE_NAME)
+        token = request.cookies.get(auth.COOKIE_NAMES[role])
         row = store.get_session(token) if token else None
         if row is None or row["role"] != role:
             raise HTTPException(401, "ログインしてください")
@@ -290,15 +290,15 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         token = auth.new_token()
         store.create_session(token, "participant", pid, auth.PARTICIPANT_TTL)
         store.log_event(pid, "login")
-        set_cookie(response, token, auth.PARTICIPANT_TTL)
+        set_cookie(response, "participant", token, auth.PARTICIPANT_TTL)
         return {"ok": True}
 
     @app.post("/api/logout")
     def logout(request: Request, response: Response):
-        token = request.cookies.get(auth.COOKIE_NAME)
+        token = request.cookies.get(auth.COOKIE_NAMES["participant"])
         if token:
             store.delete_session(token)
-        response.delete_cookie(auth.COOKIE_NAME, path="/")
+        response.delete_cookie(auth.COOKIE_NAMES["participant"], path="/")
         return {"ok": True}
 
     def items_with_paths(p) -> list[dict]:
@@ -410,7 +410,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         throttle.reset(key)
         token = auth.new_token()
         store.create_session(token, "admin", "admin", auth.ADMIN_TTL)
-        set_cookie(response, token, auth.ADMIN_TTL)
+        set_cookie(response, "admin", token, auth.ADMIN_TTL)
         return {"ok": True}
 
     @app.get("/api/admin/status")

@@ -351,3 +351,15 @@ def test_three_voices_and_listen_right_after_submit(env):
     kid2.post("/api/submit")
     audios = kid2.get("/api/me").json()["items"][0]["audios"]
     assert [(a["kind"], a["label"]) for a in audios] == [("native", "お手本")]
+
+
+def test_admin_and_student_logins_coexist_in_one_browser(env):
+    app, admin, client = env
+    (p,) = admin.post("/api/admin/participants", json={"count": 1}).json()
+    # The same client (one browser) logs in as a student while already logged in as admin.
+    login(admin, p)
+    assert admin.get("/api/me").status_code == 200
+    assert admin.get("/api/admin/status").status_code == 200
+    admin.post("/api/logout")
+    assert admin.get("/api/me").status_code == 401
+    assert admin.get("/api/admin/status").status_code == 200
