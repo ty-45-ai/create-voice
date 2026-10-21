@@ -27,7 +27,7 @@ class ChatterboxEngine:
         self.model = ChatterboxMultilingualTTS.from_pretrained(device=device)
 
     def synthesize(self, text: str, lang: str, references: list[Path], out_wav: Path,
-                   expected_seconds: float | None = None) -> None:
+                   expected_seconds: float | None = None, reference_texts: list[str] | None = None) -> None:
         self._generate(text, lang, str(references[0]), out_wav)
 
     def synthesize_standard(self, text: str, lang: str, voice: str, out_wav: Path,

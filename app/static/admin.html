@@ -145,12 +145,12 @@
           <p class="small">条件ごとに、聴取画面に並べる音声を選びます（左から順に表示）。「自分の音読」を含めると、ほかの音声は自分の音読を最後まで聞いてから押せるようになります。お手本が1種類だけのときは、生徒には「お手本」とだけ表示されます。</p>
           <div class="table-wrap"><table id="listen-matrix"></table></div>
           <div class="inline-form" style="margin-top:12px">
-            <label>標準AI音声の声（XTTS-v2 の内蔵ボイス）
+            <label>標準AI音声の声（Voicebox なら <code>kokoro:af_heart</code> のように「エンジン:声」）
               <input id="standard-voice" list="standard-voice-list" placeholder="Ana Florence">
               <datalist id="standard-voice-list"></datalist>
             </label>
           </div>
-          <p class="small">声の候補はモデルの読み込み後に表示されます。変更すると、標準AI音声は全文つくり直されます。</p>
+          <p class="small">候補はエンジンに接続すると入力欄に表示されます。変更すると、標準AI音声は全文つくり直されます。</p>
         </div>
         <div class="card">
           <h2>聴取画面の設定</h2>

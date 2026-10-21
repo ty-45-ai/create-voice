@@ -428,6 +428,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
             "sentence_count": store.active_sentence_count(),
             "listen_after_submit": store.flag("listen_after_submit"),
             "standard_voice": store.get_setting("standard_voice") or "",
+            "standard_voice_default": worker.default_standard_voice(),
             "standard_voices": worker.standard_voices(),
             "listen_sets": {c: store.listen_set(c) for c in CONDITIONS},
         }
@@ -527,6 +528,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
     def delete_participant(pid: str, _=Depends(admin)):
         existing_participant(pid)
         store.delete_participant(pid)
+        worker.forget_participant(pid)
         return {"ok": True}
 
     @app.get("/api/admin/participants/{pid}/recordings")

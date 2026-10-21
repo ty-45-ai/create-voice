@@ -421,8 +421,17 @@ class Store:
 
     def reference_paths(self, pid: str) -> list[Path]:
         """The student's own readings, longest first, used as the voice sample for cloning."""
-        rows = sorted(self.recordings_for(pid), key=lambda r: r["seconds"], reverse=True)
-        return [Path(r["path"]) for r in rows if Path(r["path"]).is_file()]
+        return [path for path, _ in self.reference_samples(pid)]
+
+    def reference_samples(self, pid: str) -> list[tuple[Path, str]]:
+        """(recording, sentence read in it), longest first."""
+        with self.read() as conn:
+            rows = conn.execute(
+                """SELECT r.path, r.seconds, s.text FROM recordings r JOIN sentences s ON s.id=r.sentence_id
+                   WHERE r.participant_id=? AND s.active=1 ORDER BY r.seconds DESC""",
+                (pid,),
+            ).fetchall()
+        return [(Path(r["path"]), r["text"]) for r in rows if Path(r["path"]).is_file()]
 
     def submit(self, pid: str) -> None:
         """Lock in the home recordings. For the AI condition this (re)starts generation."""

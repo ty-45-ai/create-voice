@@ -19,7 +19,7 @@ class DummyEngine:
         self.delay = delay
 
     def synthesize(self, text: str, lang: str, references: list[Path], out_wav: Path,
-                   expected_seconds: float | None = None) -> None:
+                   expected_seconds: float | None = None, reference_texts: list[str] | None = None) -> None:
         for ref in references:
             if not Path(ref).is_file():
                 raise FileNotFoundError(ref)

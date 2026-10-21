@@ -47,7 +47,7 @@ class XTTSEngine:
         self.tts = TTS(MODEL_NAME).to(device)
 
     def synthesize(self, text: str, lang: str, references: list[Path], out_wav: Path,
-                   expected_seconds: float | None = None) -> None:
+                   expected_seconds: float | None = None, reference_texts: list[str] | None = None) -> None:
         # XTTS conditions on up to ~30 s of speech; several clips are combined.
         refs, total = [], 0.0
         for ref in references:

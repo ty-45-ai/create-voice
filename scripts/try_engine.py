@@ -25,6 +25,8 @@ def main() -> None:
     ap.add_argument("--lang", choices=["ja", "en"], help="省略時は文章から自動判定")
     ap.add_argument("--engine", choices=ENGINE_NAMES, default=settings.engine)
     ap.add_argument("--out", type=Path, default=Path("try_engine_out.wav"))
+    ap.add_argument("--ref-text", action="append",
+                    help="見本の録音で読んでいる文（Voicebox で必要。見本ごとに指定。省略時は読み上げる文と同じとみなす）")
     ap.add_argument("--expected", type=float,
                     help="この文を読むのにかかる秒数（余分な音声を切る目安）。"
                          "省略時、見本が1ファイルならその長さ（同じ文を読んだ録音とみなす）")
@@ -45,8 +47,9 @@ def main() -> None:
 
         with wave.open(str(args.reference[0]), "rb") as w:
             expected = w.getnframes() / float(w.getframerate())
+    ref_texts = args.ref_text or [args.text] * len(args.reference)
     engine.synthesize(args.text, args.lang or guess_lang(args.text), args.reference, args.out,
-                      expected_seconds=expected)
+                      expected_seconds=expected, reference_texts=ref_texts)
     print(f"wrote {args.out} in {time.time() - t1:.1f}s")
 
 

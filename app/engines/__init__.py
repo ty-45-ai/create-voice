@@ -10,10 +10,11 @@ class Engine(Protocol):
     name: str
 
     def synthesize(self, text: str, lang: str, references: list[Path], out_wav: Path,
-                   expected_seconds: float | None = None) -> None:
+                   expected_seconds: float | None = None, reference_texts: list[str] | None = None) -> None:
         """Write speech for `text` (lang 'ja' or 'en') in the voice heard in `references`
         (the student's own recordings, longest first) to `out_wav`. `expected_seconds` is how
-        long the student took to read this text, used to cut off extra generated speech."""
+        long the student took to read this text, used to cut off extra generated speech.
+        `reference_texts` are the sentences read in each reference (some engines need them)."""
 
     def synthesize_standard(self, text: str, lang: str, voice: str, out_wav: Path,
                             expected_seconds: float | None = None) -> None:
@@ -29,7 +30,7 @@ def estimate_seconds(text: str, lang: str) -> float:
     return len(text.strip()) / per_second + 0.3
 
 
-ENGINE_NAMES = ("xtts", "chatterbox", "dummy")
+ENGINE_NAMES = ("voicebox", "xtts", "chatterbox", "dummy")
 
 
 def load_engine(name: str, device: str | None = None) -> Engine:
@@ -41,6 +42,10 @@ def load_engine(name: str, device: str | None = None) -> Engine:
         from .xtts import XTTSEngine
 
         return XTTSEngine(device=device)
+    if name == "voicebox":
+        from .voicebox import VoiceboxEngine
+
+        return VoiceboxEngine(device=device)
     if name == "chatterbox":
         from .chatterbox import ChatterboxEngine
 

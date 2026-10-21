@@ -93,12 +93,13 @@ class Worker:
         out = self.store.new_clip_path(clip["participant_id"])
         started = time.time()
         try:
-            references = self.store.reference_paths(clip["participant_id"])
-            if not references:
+            samples = self.store.reference_samples(clip["participant_id"])
+            if not samples:
                 raise RuntimeError("no recordings to use as the voice sample")
             own = self.store.get_recording(clip["participant_id"], clip["sentence_id"])
-            engine.synthesize(clip["text"], clip["lang"], references, out,
-                              expected_seconds=own["seconds"] if own else None)
+            engine.synthesize(clip["text"], clip["lang"], [p for p, _ in samples], out,
+                              expected_seconds=own["seconds"] if own else None,
+                              reference_texts=[t for _, t in samples])
             if not out.is_file() or out.stat().st_size == 0:
                 raise RuntimeError("engine produced no audio")
             if not self.store.finish_clip(clip["id"], out, wav_seconds(out)):
@@ -134,3 +135,17 @@ class Worker:
             return self._engine.standard_voices() if self._engine else []
         except Exception:  # noqa: BLE001
             return []
+
+    def forget_participant(self, pid: str) -> None:
+        """Ask the engine to drop anything it keeps for this student (e.g. Voicebox profiles)."""
+        forget = getattr(self._engine, "forget", None)
+        if forget is None:
+            return
+        try:
+            forget(pid)
+        except Exception:  # noqa: BLE001
+            log.exception("engine could not forget participant %s", pid)
+
+    def default_standard_voice(self) -> str:
+        fn = getattr(self._engine, "default_standard_voice", None)
+        return fn() if fn else ""

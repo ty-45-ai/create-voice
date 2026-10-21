@@ -52,7 +52,21 @@ ONDOKU_ENGINE=dummy python -m app
 
 `dummy` エンジンは声の代わりに「ピポパ」という音を作るだけですが、録音 → 生成 → 再生の流れをすべて確認できます。
 
-## 3. 音声生成AI（XTTS-v2）を入れる
+## 3. 音声生成AI：Voicebox を使う（おすすめ）
+
+[Voicebox](https://github.com/jamiepine/voicebox)（MITライセンス）は、PCの中だけで動く音声AIのデスクトップアプリです。Windows / Mac のインストーラーで入れられ、NVIDIA 以外の GPU（Windows は DirectML、Mac は Apple シリコン）や CPU でも動きます。アプリは Voicebox の API（`http://127.0.0.1:17493`）を呼び出して、生徒の声のクローンと標準AI音声を作ります。
+
+1. https://github.com/jamiepine/voicebox/releases/latest の「Assets」から Windows は `.msi`、Mac は `.dmg` を入れて起動する
+2. Voicebox の画面で一度ボイスを作って生成し、Qwen3-TTS 0.6B（クローン用）と Kokoro（標準AI音声用）のモデルをダウンロードしておく（アプリからの初回生成時にも自動でダウンロードされますが、時間がかかります）
+3. `.env` を `ONDOKU_ENGINE=voicebox` にして、アプリを起動する（Voicebox は起動したままにする）
+4. 管理画面「設定・出力」の標準AI音声の声に `kokoro:af_heart` などを指定する（候補は入力欄に表示されます）
+
+- 生徒が提出すると、アプリが Voicebox に「ondoku-生徒ID-…」という名前のボイスを作り、教材の録音と読んだ文を見本として登録します。生成した音声は取り込んだあと Voicebox の履歴から消します。
+- アプリで生徒のデータを削除すると、Voicebox 側のその生徒のボイスも削除されます。
+- Voicebox のクラウド機能は既定で無効です。外部との通信はモデルのダウンロードのみです。
+- 試験用サーバーでの自動テストで API とのやり取りを確認していますが、実際の Voicebox との接続は各自のPCで確認してください。
+
+## 3'. 音声生成AI（XTTS-v2）を入れる（別の選択肢）
 
 ```bash
 source .venv/bin/activate
