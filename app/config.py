@@ -29,7 +29,7 @@ def _flag(name: str, default: bool = False) -> bool:
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path
-    engine: str = "xtts"
+    engine: str = "voicebox"
     admin_password: str | None = None
     require_approval: bool = False
     secure_cookie: bool = False
@@ -44,7 +44,7 @@ def load_settings() -> Settings:
     load_dotenv()
     return Settings(
         data_dir=Path(os.environ.get("ONDOKU_DATA_DIR", "data")).resolve(),
-        engine=os.environ.get("ONDOKU_ENGINE", "xtts").strip().lower(),
+        engine=os.environ.get("ONDOKU_ENGINE", "voicebox").strip().lower(),
         admin_password=os.environ.get("ONDOKU_ADMIN_PASSWORD") or None,
         require_approval=_flag("ONDOKU_REQUIRE_APPROVAL"),
         secure_cookie=_flag("ONDOKU_SECURE_COOKIE"),

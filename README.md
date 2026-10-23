@@ -4,11 +4,13 @@
 
 - 参加者はブラウザだけで使えます（Windows / Mac / Chromebook / iPad。インストール不要）。
 - 音声の生成は**研究者が管理するMac（またはPC）の中だけ**で行い、外部のAIサービスには音声も文章も送りません。
-- 生成には、オープンソースの **XTTS-v2**（`pip install` だけで導入できる音声合成モデル）を使います。
+- 生成には、PCの中だけで動く無料の音声AIアプリ **Voicebox**（クローンは Qwen3-TTS、標準AI音声は Kokoro）を使います。
+
+> **Mac で使う先生へ**：Python・Git・Voicebox の入れ方から起動・更新までの全手順を [docs/mac-setup.md](docs/mac-setup.md) にまとめています。
 
 ```
 参加者のブラウザ                       研究者のMac（このアプリ）
- 録音 / ファイル選択  ──HTTPS──▶  Webサーバ ─▶ 生成キュー ─▶ XTTS-v2
+ 録音 / ファイル選択  ──HTTPS──▶  Webサーバ ─▶ 生成キュー ─▶ Voicebox
  生成音声の再生      ◀──────────  保存（data/ フォルダ）◀──┘
                                     管理画面 /admin
 ```
@@ -29,7 +31,9 @@
 ## 1. 準備するもの
 
 - 研究者用の Mac（Apple Silicon 推奨、メモリ 16GB 以上、空き容量 10GB 以上）
-- Python 3.10〜3.13（[python.org](https://www.python.org/downloads/macos/) のインストーラで可）
+- Python 3.10〜3.13（推奨 3.13。[python.org](https://www.python.org/downloads/) のインストーラで可）
+- Git（Mac は `xcode-select --install`、Windows は https://git-scm.com/download/win ）
+- [Voicebox](https://voicebox.sh)（手順3）
 - 参加者が自宅から使う場合は、HTTPS で公開する手段（後述）
 
 ## 2. まずAIなしで動かしてみる（5分）
@@ -37,8 +41,8 @@
 ターミナルで次を実行します。
 
 ```bash
-git clone <このリポジトリのURL> ondoku-voice
-cd ondoku-voice
+git clone https://github.com/ty-45-ai/create-voice.git
+cd create-voice
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -56,7 +60,7 @@ ONDOKU_ENGINE=dummy python -m app
 
 [Voicebox](https://github.com/jamiepine/voicebox)（MITライセンス）は、PCの中だけで動く音声AIのデスクトップアプリです。Windows / Mac のインストーラーで入れられ、NVIDIA 以外の GPU（Windows は DirectML、Mac は Apple シリコン）や CPU でも動きます。アプリは Voicebox の API（`http://127.0.0.1:17493`）を呼び出して、生徒の声のクローンと標準AI音声を作ります。
 
-1. https://github.com/jamiepine/voicebox/releases/latest の「Assets」から Windows は `.msi`、Mac は `.dmg` を入れて起動する
+1. https://github.com/jamiepine/voicebox/releases/latest の「Assets」から Windows は `.msi`、Mac は `.dmg` を入れて起動する（Mac は https://voicebox.sh/download/mac-arm （Apple シリコン）/ https://voicebox.sh/download/mac-intel からも取得可）
 2. Voicebox の画面で一度ボイスを作って生成し、Qwen3-TTS 0.6B（クローン用）と Kokoro（標準AI音声用）のモデルをダウンロードしておく（アプリからの初回生成時にも自動でダウンロードされますが、時間がかかります）
 3. `.env` を `ONDOKU_ENGINE=voicebox` にして、アプリを起動する（Voicebox は起動したままにする）
 4. 管理画面「設定・出力」の標準AI音声の声に `kokoro:af_heart` などを指定する（候補は入力欄に表示されます）
@@ -117,7 +121,7 @@ GPT-SoVITS のような専用WebUIや個別の学習は不要で、生徒が家�
 
 | ファイル | 内容 |
 | --- | --- |
-| `start-windows.bat` / `start-mac.command` | アプリを起動（初回は Python の部品も自動で準備） |
+| `start-windows.bat` / `start-mac.command` | アプリを起動（初回は `.env` と Python の部品も自動で準備）し、管理画面をブラウザで開く |
 | `update-windows.bat` / `update-mac.command` | GitHub から最新版を取り込む（アプリを止めてから実行） |
 
 更新用ファイルは、このフォルダを Git で取得（`git clone`）した場合に使えます。ZIP で取得した場合は、Git で取得し直してください（`.env` と `data` は新しいフォルダにコピー）。
