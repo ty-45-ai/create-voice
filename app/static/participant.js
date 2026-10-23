@@ -350,23 +350,14 @@ function renderListen() {
   const waiting = me.items.some((i) => (i.audios || []).some((a) => a.kind !== "own" && !a.url));
   const progress = $("listen-progress");
   progress.classList.toggle("hidden", !waiting);
-  progress.textContent = "AIの音声を準備しています。少し待つと聞けるようになります。";
-  const kinds = (me.items[0] && me.items[0].audios) || [];
-  const hasOwn = kinds.some((a) => a.kind === "own");
-  const others = kinds.filter((a) => a.kind !== "own");
-  const guide = $("listen-guide");
-  if (hasOwn && others.length) {
-    guide.innerHTML = "";
-    guide.append("それぞれの文で、", Object.assign(document.createElement("b"), { textContent: "① 自分の音読" }),
-      " を聞いてから、", others.map((a, i) => `${CIRCLED[i + 1]} ${a.label}`).join("、"), " を聞いてください。");
-  } else {
-    guide.textContent = "それぞれの文の音声を聞いてください。";
-  }
+  progress.textContent = "AI音声を準備しています。少し待つと聞けるようになります（画面は自動で更新されます）。";
   $("survey").classList.toggle("hidden", !me.survey_url);
   $("survey-link").href = me.survey_url || "#";
   if (waiting) pollTimer = setTimeout(refresh, 10000);
 }
 
+// One row per sound: number, name, state, play button. The AI voices unlock once the
+// student's own recording has been heard to the end.
 function listenCard(item, index) {
   const node = $("listen-tpl").content.firstElementChild.cloneNode(true);
   const q = (sel) => node.querySelector(sel);
@@ -378,49 +369,63 @@ function listenCard(item, index) {
   else q(".player-settings").remove();
 
   const sid = item.sentence_id;
-  const hint = q(".hint");
-  const box = q(".audio-buttons");
   const audios = item.audios || [];
   const own = audios.find((a) => a.kind === "own");
-  // When the own recording is part of the set, the others unlock after hearing it once.
   const locked = () => own && own.url && !heardOwn.has(sid);
-  const buttons = [];
+  const rows = [];
 
-  const refreshLocks = () => {
-    let waitingFor = "";
-    for (const { btn, audio } of buttons) {
-      if (audio.kind === "own") continue;
-      btn.disabled = !audio.url || locked();
-      if (!audio.url && !waitingFor) waitingFor = `${audio.label}は準備中です。`;
+  const refreshRows = () => {
+    for (const row of rows) {
+      const { audio, btn, state, li } = row;
+      let text;
+      let ready = !!audio.url;
+      if (!audio.url) text = audio.kind === "own" ? "録音がありません" : "準備中です…";
+      else if (audio.kind !== "own" && locked()) {
+        text = "① を最後まで聞くと聞けます";
+        ready = false;
+      } else if (row.heard) text = "聞きました ✓";
+      else text = "聞けます";
+      state.textContent = text;
+      btn.disabled = !ready;
+      li.classList.toggle("ready", ready);
+      li.classList.toggle("heard", !!row.heard);
     }
-    hint.textContent = locked() ? "先に ① 自分の音読 を最後まで聞いてください。" : waitingFor;
   };
 
   audios.forEach((audio, i) => {
-    const label = `${CIRCLED[i] || "・"} ${audio.label}を聞く`;
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = `big ${audio.kind === "own" ? "" : "primary"} play-${audio.kind}`;
-    btn.textContent = audio.kind === "own" && !audio.url ? "① 録音がありません" : label;
-    btn.disabled = !audio.url;
-    box.appendChild(btn);
-    buttons.push({ btn, audio });
-    if (!audio.url) return;
+    const li = document.createElement("li");
+    li.className = `voice-row voice-${audio.kind}`;
+    const step = Object.assign(document.createElement("span"), { className: "voice-step", textContent: CIRCLED[i] || "・" });
+    const info = Object.assign(document.createElement("div"), { className: "voice-info" });
+    const name = Object.assign(document.createElement("b"), { className: "voice-name", textContent: audio.label });
+    const state = Object.assign(document.createElement("span"), { className: "voice-state small" });
+    info.append(name, state);
+    const btn = Object.assign(document.createElement("button"), { type: "button", className: "voice-play primary" });
+    btn.textContent = "▶ 聞く";
+    li.append(step, info, btn);
+    q(".voice-list").appendChild(li);
+    const row = { audio, btn, state, li, heard: audio.kind === "own" && heardOwn.has(sid) };
+    rows.push(row);
     btn.addEventListener("click", () => {
+      if (!audio.url) return;
       const key = `${audio.kind}-${sid}`;
       if (currentPlayer && currentPlayer.key === key) return stopAudio();
-      const player = playRepeated(audio.url, node, settings, (state, round, finished) => {
-        if (finished && audio.kind === "own" && !heardOwn.has(sid)) {
-          heardOwn.add(sid);
-          refreshLocks();
+      const player = playRepeated(audio.url, node, settings, (st, round, finished) => {
+        if (finished) {
+          row.heard = true;
+          if (audio.kind === "own") heardOwn.add(sid);
+          refreshRows();
         }
-        btn.textContent = state === "done" ? label : `■ 停止（${roundLabel(round, settings)}）`;
+        li.classList.toggle("playing", st !== "done");
+        btn.textContent = st === "done" ? "▶ 聞く" : "■ 止める";
+        if (st === "done") refreshRows();
+        else state.textContent = `再生中（${roundLabel(round, settings)}）`;
       });
       player.key = key;
       logEvent(`play_${audio.kind}`, sid, `rate=${settings.rate};repeat=${settings.repeat}`);
     });
   });
-  refreshLocks();
+  refreshRows();
   return node;
 }
 

@@ -58,7 +58,7 @@
     <section id="view-listen" class="hidden">
       <div class="card">
         <h1>音声を聞きましょう</h1>
-        <p id="listen-guide">それぞれの文で、<b>① 自分の音読</b> を聞いてから、ほかの音声を聞いてください。</p>
+        <p id="listen-guide">練習ごとに、<b>① 自分の声 → ② AI音声（クローン） → ③ AI音声（標準）</b> の順に聞きましょう。②と③は、①を最後まで聞くと聞けるようになります。</p>
         <p id="listen-progress" class="notice hidden"></p>
       </div>
       <div id="listen-items"></div>
@@ -110,8 +110,7 @@
         <span class="seq"></span>
       </div>
       <p class="text"></p>
-      <div class="controls audio-buttons"></div>
-      <p class="hint small"></p>
+      <ol class="voice-list"></ol>
       <div class="player-settings">
         <div class="setting">
           <span class="setting-label">速さ <b class="rate-value">1.0 倍</b></span>

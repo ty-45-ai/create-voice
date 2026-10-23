@@ -17,10 +17,7 @@ function h(tag, attrs = {}, ...children) {
 
 const STATUS_LABEL = { done: "完了", queued: "待機中", processing: "生成中", failed: "失敗" };
 const LANG_LABEL = { ja: "日本語", en: "英語" };
-const CONDITION_LABEL = { ai: "AI自己音声", native: "ネイティブ" };
 const PHASE_LABEL = { record: "録音", listen: "聴取", closed: "停止" };
-const KIND_LABEL = { own: "自分の音読", ai_self: "AI自己音声（クローン）", standard: "標準AI音声", native: "ネイティブ音声" };
-const needsAi = (condition) => !!status && (status.listen_sets[condition] || []).includes("ai_self");
 
 async function api(path, opts = {}) {
   const init = { credentials: "same-origin", ...opts };
@@ -125,6 +122,20 @@ async function loadStatus() {
   if (status.engine_error) state += `（エラー: ${status.engine_error}）`;
   $("engine-state").textContent = state;
   $("engine-state").style.color = status.engine_error ? "var(--bad)" : "";
+  const failures = status.standard_failures || [];
+  $("standard-alert").classList.toggle("hidden", !failures.length);
+  $("standard-alert").replaceChildren(
+    h("h2", {}, "AI音声（標準）を作れなかった教材があります"),
+    h("p", { class: "small" }, "生徒の画面では「準備中」のままになります。原因を直してから「もう一度作る」を押してください。"
+      + "声が教材の言語を話せない場合は「設定・出力」で声を変えてください。"),
+    ...failures.map((f) => h("div", { class: "fail-row" },
+      h("div", { class: "pre" }, f.text),
+      h("div", { class: "err-text" }, f.error),
+      h("button", { onclick: async () => {
+        await api(`/api/admin/sentences/${f.sentence_id}/standard/regenerate`, { method: "POST" });
+        loadProgress();
+      } }, "もう一度作る"))),
+  );
 }
 
 // ---- progress & phase ----
@@ -142,7 +153,7 @@ async function loadProgress() {
   const rows = await api("/api/admin/progress");
   const table = $("progress-table");
   table.replaceChildren(
-    h("tr", {}, ["クラス", "段階", "人数（AI / ネイティブ）", "提出済み", "AI音声 準備完了", "未提出の生徒", "AI音声 生成待ち"].map((t) => h("th", {}, t))),
+    h("tr", {}, ["クラス", "段階", "人数", "提出済み", "AI音声 準備完了", "未提出の生徒", "AI音声 生成待ち"].map((t) => h("th", {}, t))),
     ...rows.map((c) =>
       h("tr", {},
         h("td", {}, c.class_name || "（未設定）"),
@@ -150,10 +161,10 @@ async function loadProgress() {
           await api("/api/admin/phase", { method: "PUT", json: { class_name: c.class_name, phase } });
           loadProgress();
         })),
-        h("td", { class: "num" }, `${c.total}（${c.ai} / ${c.native}）`),
+        h("td", { class: "num" }, `${c.total}`),
         h("td", { class: "num" }, `${c.submitted} / ${c.total}`),
-        h("td", { class: "num" }, c.ai_needed ? `${c.ai_ready} / ${c.ai_needed}` : "—",
-          c.ai_needed && c.ai_ready === c.ai_needed ? h("span", { class: "badge done" }, " 全員分そろっています") : ""),
+        h("td", { class: "num" }, `${c.ai_ready} / ${c.total}`,
+          c.total && c.ai_ready === c.total ? h("span", { class: "badge done" }, " 全員分そろっています") : ""),
         h("td", { class: "mono small" }, c.not_submitted.join(", ") || "—"),
         h("td", { class: "mono small" }, c.ai_waiting.join(", ") || "—"),
       ),
@@ -175,11 +186,11 @@ function showCreated(rows) {
   lastCreated = rows;
   $("created").classList.remove("hidden");
   $("created-table").replaceChildren(
-    h("tr", {}, ["ID", "あいことば", "クラス", "条件"].map((t) => h("th", {}, t))),
+    h("tr", {}, ["ID", "あいことば", "クラス"].map((t) => h("th", {}, t))),
     ...rows.map((p) =>
       h("tr", {},
         h("td", { class: "mono" }, p.id), h("td", { class: "mono" }, p.passcode),
-        h("td", {}, p.class_name), h("td", {}, CONDITION_LABEL[p.condition])),
+        h("td", {}, p.class_name)),
     ),
   );
   loadParticipants();
@@ -192,7 +203,6 @@ $("create-form").addEventListener("submit", async (e) => {
       count: Number($("create-count").value),
       prefix: $("create-prefix").value.trim(),
       class_name: $("create-class").value.trim(),
-      condition: $("create-condition").value,
     },
   }));
 });
@@ -206,8 +216,8 @@ $("import-button").addEventListener("click", async () => {
 
 $("created-csv").addEventListener("click", () => {
   downloadCsv("participants-passcodes.csv", [
-    ["id", "passcode", "class", "condition", "url"],
-    ...lastCreated.map((p) => [p.id, p.passcode, p.class_name, p.condition, location.origin + "/"]),
+    ["id", "passcode", "class", "url"],
+    ...lastCreated.map((p) => [p.id, p.passcode, p.class_name, location.origin + "/"]),
   ]);
 });
 
@@ -217,26 +227,25 @@ async function loadParticipants() {
   const sel = $("clip-participant");
   const keep = sel.value;
   sel.replaceChildren(h("option", { value: "" }, "すべて"),
-    ...rows.filter((p) => needsAi(p.condition)).map((p) => h("option", { value: p.id }, p.id)));
+    ...rows.map((p) => h("option", { value: p.id }, p.id)));
   sel.value = keep;
 
   const table = $("participants-table");
   table.replaceChildren(
-    h("tr", {}, ["ID", "クラス", "条件", "録音", "提出", "AI音声", "最終利用", "操作"].map((t) => h("th", {}, t))),
+    h("tr", {}, ["ID", "クラス", "録音", "提出", "AI音声（クローン）", "最終利用", "操作"].map((t) => h("th", {}, t))),
     ...rows.map((p) =>
       h("tr", { class: p.active ? "" : "inactive" },
         h("td", { class: "mono" }, p.id, p.active ? "" : h("div", { class: "small" }, "停止中")),
         h("td", {}, p.class_name || "—"),
-        h("td", {}, CONDITION_LABEL[p.condition]),
         h("td", { class: "num" }, `${p.recorded} / ${total}`,
           p.recorded ? [" ", h("button", { onclick: () => showRecordings(p) }, "聞く")] : ""),
         h("td", { class: "small" }, p.submitted_at || "未提出"),
-        h("td", { class: "num" }, needsAi(p.condition) ? `${p.clip_done} / ${p.submitted_at ? total : 0}` : "—",
+        h("td", { class: "num" }, `${p.clip_done} / ${p.submitted_at ? total : 0}`,
           p.clip_failed ? h("span", { class: "badge failed" }, ` 失敗 ${p.clip_failed}`) : ""),
         h("td", { class: "small" }, p.last_activity || "—"),
         h("td", {},
           h("div", { class: "actions" },
-            h("button", { onclick: () => editParticipant(p) }, "クラス・条件"),
+            h("button", { onclick: () => editParticipant(p) }, "クラス変更"),
             p.submitted_at ? h("button", { onclick: () => reopen(p) }, "提出を取り消す") : null,
             h("button", { onclick: () => resetPass(p) }, "あいことば再発行"),
             h("button", { onclick: () => toggleActive(p) }, p.active ? "停止" : "再開"),
@@ -246,7 +255,7 @@ async function loadParticipants() {
       ),
     ),
   );
-  if (!rows.length) emptyRow(table, 8, "まだ参加者がいません。");
+  if (!rows.length) emptyRow(table, 7, "まだ参加者がいません。");
 }
 
 async function showRecordings(p) {
@@ -269,10 +278,7 @@ async function showRecordings(p) {
 async function editParticipant(p) {
   const cls = prompt(`${p.id} のクラス`, p.class_name);
   if (cls === null) return;
-  const cond = prompt(`${p.id} の条件（ai = AI自己音声 / native = ネイティブ）`, p.condition);
-  if (cond === null) return;
-  if (!["ai", "native"].includes(cond.trim())) return alert("条件は ai か native を入力してください。");
-  await api(`/api/admin/participants/${p.id}`, { method: "PATCH", json: { class_name: cls, condition: cond.trim() } });
+  await api(`/api/admin/participants/${p.id}`, { method: "PATCH", json: { class_name: cls } });
   loadParticipants();
 }
 
@@ -343,43 +349,16 @@ $("sentence-form").addEventListener("submit", async (e) => {
   loadSentences();
 });
 
-let nativeTarget = null;
-$("native-file").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  e.target.value = "";
-  if (!file || nativeTarget == null) return;
-  const form = new FormData();
-  form.append("file", file);
-  await api(`/api/admin/sentences/${nativeTarget}/native`, { method: "POST", body: form });
-  loadSentences();
-});
-
-function pickNative(sid) {
-  nativeTarget = sid;
-  $("native-file").click();
-}
-
 async function loadSentences() {
   const rows = await api("/api/admin/sentences");
   const table = $("sentences-table");
   table.replaceChildren(
-    h("tr", {}, ["順番", "文", "言語", "ネイティブ音声", "標準AI音声", "公開", "操作"].map((t) => h("th", {}, t))),
+    h("tr", {}, ["順番", "文", "言語", "AI音声（標準）", "公開", "操作"].map((t) => h("th", {}, t))),
     ...rows.map((s) =>
       h("tr", { class: s.active ? "" : "inactive" },
         h("td", { class: "num" }, s.sort_order),
         h("td", { lang: s.lang, class: "pre" }, s.text),
         h("td", {}, LANG_LABEL[s.lang] || s.lang),
-        h("td", {},
-          h("div", { class: "actions" },
-            s.has_native
-              ? [
-                  h("button", { onclick: () => preview(`/api/admin/sentences/${s.id}/native?t=${Date.now()}`) }, "試聴"),
-                  h("button", { onclick: () => pickNative(s.id) }, "差し替え"),
-                  h("button", { class: "danger", onclick: () => removeNative(s) }, "削除"),
-                ]
-              : [h("span", { class: "badge failed" }, "未登録"), h("button", { onclick: () => pickNative(s.id) }, "アップロード")],
-          ),
-        ),
         h("td", {},
           h("div", { class: "actions" },
             h("span", { class: `badge ${s.standard_status || ""}` }, STATUS_LABEL[s.standard_status] || "—"),
@@ -402,7 +381,7 @@ async function loadSentences() {
       ),
     ),
   );
-  if (!rows.length) emptyRow(table, 7, "まだ教材がありません。");
+  if (!rows.length) emptyRow(table, 6, "まだ教材がありません。");
 }
 
 async function regenerateStandard(s) {
@@ -430,12 +409,6 @@ async function moveSentence(s) {
   const n = prompt("順番の数字（小さいほど上に表示）", s.sort_order);
   if (n === null || Number.isNaN(Number(n))) return;
   patchSentence(s.id, { sort_order: Number(n) });
-}
-
-async function removeNative(s) {
-  if (!confirm("この文のネイティブ音声を削除しますか？")) return;
-  await api(`/api/admin/sentences/${s.id}/native`, { method: "DELETE" });
-  loadSentences();
 }
 
 async function deleteSentence(s) {
@@ -495,7 +468,7 @@ async function loadClips() {
       ),
     ),
   );
-  if (!rows.length) emptyRow(table, 8, "該当するAI音声はありません（AI自己音声条件の生徒が提出すると生成されます）。");
+  if (!rows.length) emptyRow(table, 8, "該当するAI音声はありません（生徒が提出すると生成されます）。");
 }
 
 async function approve(c, approved) {
@@ -516,28 +489,12 @@ async function loadSettings() {
   $("require-approval").checked = status.require_approval;
   $("listen-after-submit").checked = status.listen_after_submit;
   $("survey-url").value = status.survey_url;
-  $("standard-voice").value = status.standard_voice;
+  for (const lang of ["en", "ja"]) {
+    $(`standard-voice-${lang}`).value = status.standard_voice[lang] || "";
+    $(`standard-voice-${lang}`).placeholder = status.standard_voice_default[lang]
+      ? `自動（${status.standard_voice_default[lang]}）` : "自動";
+  }
   $("standard-voice-list").replaceChildren(...status.standard_voices.map((v) => h("option", { value: v })));
-  $("listen-matrix").replaceChildren(
-    h("tr", {}, h("th", {}, "条件"), ...Object.values(KIND_LABEL).map((t) => h("th", {}, t))),
-    ...Object.entries(CONDITION_LABEL).map(([cond, label]) =>
-      h("tr", {},
-        h("td", {}, `${label}の生徒`),
-        ...Object.keys(KIND_LABEL).map((kind) =>
-          h("td", {}, h("input", {
-            type: "checkbox", class: "listen-kind", "data-cond": cond, "data-kind": kind,
-            checked: (status.listen_sets[cond] || []).includes(kind),
-          }))),
-      )),
-  );
-}
-
-function readListenSets() {
-  const sets = { ai: [], native: [] };
-  document.querySelectorAll(".listen-kind").forEach((el) => {
-    if (el.checked) sets[el.dataset.cond].push(el.dataset.kind);
-  });
-  return sets;
 }
 
 $("save-settings").addEventListener("click", async () => {
@@ -548,8 +505,7 @@ $("save-settings").addEventListener("click", async () => {
       require_approval: $("require-approval").checked,
       listen_after_submit: $("listen-after-submit").checked,
       survey_url: $("survey-url").value,
-      standard_voice: $("standard-voice").value.trim() || status.standard_voice,
-      listen_sets: readListenSets(),
+      standard_voices: { en: $("standard-voice-en").value.trim(), ja: $("standard-voice-ja").value.trim() },
     },
   });
   await loadStatus();

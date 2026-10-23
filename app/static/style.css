@@ -172,3 +172,25 @@ tr.inactive td { opacity: 0.55; }
 
 /* practice passages keep their line breaks */
 .item .text, td.pre { white-space: pre-wrap; }
+
+/* listening: one row per sound */
+.voice-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 10px; }
+.voice-row {
+  display: flex; align-items: center; gap: 12px; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--bg); opacity: 0.6;
+}
+.voice-row.ready, .voice-row.heard { opacity: 1; }
+.voice-row.playing { border-color: var(--primary); box-shadow: 0 0 0 2px var(--soft-blue); }
+.voice-step { font-size: 1.5em; line-height: 1; min-width: 1.2em; text-align: center; }
+.voice-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.voice-name { font-size: 1.05em; white-space: nowrap; }
+.voice-row.heard .voice-state { color: var(--good, #2e7d4f); }
+.voice-play { padding: 10px 16px; border-radius: 999px; font-weight: 700; white-space: nowrap; min-width: 6em; }
+@media (max-width: 480px) {
+  .voice-row { gap: 8px; padding: 10px; }
+  .voice-name { font-size: 0.98em; }
+  .voice-step { font-size: 1.3em; }
+}
+.voice-play:disabled { background: var(--line); border-color: var(--line); color: var(--muted); }
+#standard-alert { border-color: var(--bad); }
+.fail-row { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid var(--line); justify-items: start; }

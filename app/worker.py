@@ -116,7 +116,7 @@ class Worker:
     def _make_standard(self, engine: Engine, std) -> None:
         sid = std["sentence_id"]
         out = self.store.new_standard_path(sid)
-        voice = self.store.get_setting("standard_voice") or ""
+        voice = self.store.standard_voice(std["lang"])
         try:
             engine.synthesize_standard(std["text"], std["lang"], voice, out,
                                        expected_seconds=estimate_seconds(std["text"], std["lang"]))
@@ -146,6 +146,10 @@ class Worker:
         except Exception:  # noqa: BLE001
             log.exception("engine could not forget participant %s", pid)
 
-    def default_standard_voice(self) -> str:
+    def default_standard_voice(self, lang: str) -> str:
+        """The stock voice used for `lang` when the researcher has not chosen one."""
         fn = getattr(self._engine, "default_standard_voice", None)
-        return fn() if fn else ""
+        try:
+            return fn(lang) if fn else ""
+        except Exception:  # noqa: BLE001
+            return ""

@@ -1,19 +1,18 @@
 """SQLite storage and the data rules of the app (study 1).
 
-Flow: at home each student records every practice sentence and submits. For students in the
-'ai' condition the server then generates the sentence in their own voice, using their
-recordings as the voice sample. At school students hear their own recording, then a model:
-the AI self-voice ('ai' condition) or the native speaker audio the researcher uploaded ('native').
+Flow: at home each student records every practice sentence and submits. The server then
+generates each sentence in the student's own voice (the AI clone), using their recordings as the
+voice sample, plus one stock-voice reading per sentence shared by everyone. When listening, every
+student hears the same three sounds: their own recording, the AI clone, the standard AI voice.
 
 Files live under the data directory:
   recordings/<participant>/<sentence>.wav  the student's own reading
-  clips/<participant>/<file>.wav           AI self-voice, one per sentence
-  native/<sentence>.<ext>                  native speaker audio, one per sentence
+  clips/<participant>/<file>.wav           AI clone, one per sentence
+  standard/<sentence>-<id>.wav             standard AI voice, one per sentence
 """
 
 from __future__ import annotations
 
-import random
 import re
 import shutil
 import sqlite3
@@ -24,13 +23,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-CONDITIONS = ("ai", "native")
 PHASES = ("record", "listen", "closed")
-# What a student can hear at the listening stage. 'own' = their own recording,
-# 'ai_self' = AI voice cloned from it, 'standard' = the engine's stock voice (same for
-# everyone), 'native' = the uploaded native speaker audio.
-AUDIO_KINDS = ("own", "ai_self", "standard", "native")
-DEFAULT_LISTEN_SETS = {"ai": ("own", "ai_self"), "native": ("own", "native")}
+# What every student hears at the listening stage, in this order: their own recording,
+# the AI voice cloned from it, the engine's stock voice (same for everyone).
+AUDIO_KINDS = ("own", "ai_self", "standard")
+LANGS = ("en", "ja")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS participants (
@@ -117,27 +114,17 @@ DEFAULT_SETTINGS = {
     "survey_url": "",
     "phase": "record",
     "listen_after_submit": "1",
-    "standard_voice": "Ana Florence",
-    **{f"listen_set:{c}": ",".join(kinds) for c, kinds in DEFAULT_LISTEN_SETS.items()},
+    # Stock voice per language; empty = the engine picks one that speaks the language.
+    "standard_voice:en": "",
+    "standard_voice:ja": "",
 }
 
 PARTICIPANT_ID_RE = re.compile(r"^[A-Z0-9_-]{1,32}$")
 JAPANESE_RE = re.compile(r"[぀-ヿ㐀-鿿]")
-NATIVE_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".oga", ".webm"}
 
 
 def guess_lang(text: str) -> str:
     return "ja" if JAPANESE_RE.search(text) else "en"
-
-
-def balanced_conditions(count: int, rng: random.Random | None = None) -> list[str]:
-    """Half 'ai', half 'native' (the odd one random), in random order."""
-    rng = rng or random.SystemRandom()
-    half = [CONDITIONS[i % 2] for i in range(count - count % 2)]
-    if count % 2:
-        half.append(rng.choice(CONDITIONS))
-    rng.shuffle(half)
-    return half
 
 
 class Store:
@@ -145,8 +132,7 @@ class Store:
         self.data_dir = data_dir
         self.recordings_dir = data_dir / "recordings"
         self.clips_dir = data_dir / "clips"
-        self.native_dir = data_dir / "native"
-        for d in (self.data_dir, self.recordings_dir, self.clips_dir, self.native_dir):
+        for d in (self.data_dir, self.recordings_dir, self.clips_dir):
             d.mkdir(parents=True, exist_ok=True)
         self.db_path = data_dir / "ondoku.sqlite3"
         self._write_lock = threading.Lock()
@@ -159,7 +145,10 @@ class Store:
             # A crash mid-generation leaves rows in 'processing'; run them again.
             conn.execute("UPDATE clips SET status='queued' WHERE status='processing'")
             conn.execute("UPDATE standard_clips SET status='queued' WHERE status='processing'")
+        # Native speaker audio and the two conditions were dropped: everyone hears the same.
+        shutil.rmtree(data_dir / "native", ignore_errors=True)
         self.sync_standard()
+        self.sync_clips()
 
     @staticmethod
     def _migrate(conn: sqlite3.Connection) -> None:
@@ -171,6 +160,17 @@ class Store:
         have = {r["name"] for r in conn.execute("PRAGMA table_info(participants)")}
         if "group_name" in have:  # first prototype stored the class as 'group'
             conn.execute("UPDATE participants SET class_name=group_name WHERE class_name=''")
+        # Earlier versions had an 'ai' and a 'native' condition and per-condition listen sets.
+        conn.execute("UPDATE participants SET condition='ai' WHERE condition != 'ai'")
+        conn.execute("UPDATE sentences SET native_path=NULL WHERE native_path IS NOT NULL")
+        conn.execute("DELETE FROM settings WHERE key LIKE 'listen_set:%'")
+        old = conn.execute("SELECT value FROM settings WHERE key='standard_voice'").fetchone()
+        if old is not None:
+            if ":" in old["value"]:  # a Voicebox voice ("engine:voice") chosen for English texts
+                conn.execute("INSERT INTO settings(key, value) VALUES ('standard_voice:en', ?) "
+                             "ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE settings.value=''",
+                             (old["value"],))
+            conn.execute("DELETE FROM settings WHERE key='standard_voice'")
 
     # ---- connection helpers -------------------------------------------------
 
@@ -223,20 +223,8 @@ class Store:
     def require_approval(self) -> bool:
         return self.flag("require_approval")
 
-    def listen_set(self, condition: str) -> list[str]:
-        """The audio kinds a student in this condition hears, in playing order."""
-        raw = self.get_setting(f"listen_set:{condition}")
-        kinds = (raw.split(",") if raw is not None else DEFAULT_LISTEN_SETS.get(condition, ("own",)))
-        return [k for k in AUDIO_KINDS if k in kinds]
-
-    def set_listen_set(self, condition: str, kinds: list[str]) -> None:
-        if condition not in CONDITIONS or any(k not in AUDIO_KINDS for k in kinds):
-            raise ValueError(kinds)
-        self.set_setting(f"listen_set:{condition}", ",".join(k for k in AUDIO_KINDS if k in kinds))
-        self.sync_clips()
-
-    def needs_ai_self(self, condition: str) -> bool:
-        return "ai_self" in self.listen_set(condition)
+    def standard_voice(self, lang: str) -> str:
+        return self.get_setting(f"standard_voice:{lang}") or ""
 
     def effective_phase(self, participant) -> str:
         """The class's stage, except that a submitted student may listen straight away
@@ -293,17 +281,15 @@ class Store:
             n += 1
         return ids
 
-    def add_participant(self, pid: str, passcode_hash: str, class_name: str, condition: str) -> None:
-        if condition not in CONDITIONS:
-            raise ValueError(condition)
+    def add_participant(self, pid: str, passcode_hash: str, class_name: str) -> None:
         with self.tx() as conn:
             conn.execute(
-                "INSERT INTO participants(id, passcode_hash, class_name, condition, created_at) VALUES (?, ?, ?, ?, ?)",
-                (pid, passcode_hash, class_name, condition, time.time()),
+                "INSERT INTO participants(id, passcode_hash, class_name, created_at) VALUES (?, ?, ?, ?)",
+                (pid, passcode_hash, class_name, time.time()),
             )
 
     def update_participant(self, pid: str, *, active: bool | None = None, class_name: str | None = None,
-                           condition: str | None = None, passcode_hash: str | None = None) -> None:
+                           passcode_hash: str | None = None) -> None:
         with self.tx() as conn:
             if active is not None:
                 conn.execute("UPDATE participants SET active=? WHERE id=?", (int(active), pid))
@@ -311,10 +297,6 @@ class Store:
                     conn.execute("DELETE FROM sessions WHERE role='participant' AND subject=?", (pid,))
             if class_name is not None:
                 conn.execute("UPDATE participants SET class_name=? WHERE id=?", (class_name, pid))
-            if condition is not None:
-                if condition not in CONDITIONS:
-                    raise ValueError(condition)
-                conn.execute("UPDATE participants SET condition=? WHERE id=?", (condition, pid))
             if passcode_hash is not None:
                 conn.execute("UPDATE participants SET passcode_hash=? WHERE id=?", (passcode_hash, pid))
                 conn.execute("DELETE FROM sessions WHERE role='participant' AND subject=?", (pid,))
@@ -324,7 +306,7 @@ class Store:
         with self.read() as conn:
             rows = conn.execute(
                 """
-                SELECT p.id, p.class_name, p.condition, p.active, p.submitted_at, p.created_at,
+                SELECT p.id, p.class_name, p.active, p.submitted_at, p.created_at,
                   (SELECT COUNT(*) FROM recordings r JOIN sentences s ON s.id=r.sentence_id
                      WHERE r.participant_id=p.id AND s.active=1) AS recorded,
                   (SELECT COUNT(*) FROM clips c JOIN sentences s ON s.id=c.sentence_id
@@ -352,22 +334,17 @@ class Store:
                 continue
             c = out.setdefault(p["class_name"], {
                 "class_name": p["class_name"], "phase": self.phase_for(p["class_name"]),
-                "total": 0, "submitted": 0, "ai": 0, "native": 0,
-                "ai_needed": 0, "ai_ready": 0, "not_submitted": [], "ai_waiting": [],
+                "total": 0, "submitted": 0, "ai_ready": 0, "not_submitted": [], "ai_waiting": [],
             })
             c["total"] += 1
-            c[p["condition"]] += 1
-            if self.needs_ai_self(p["condition"]):
-                c["ai_needed"] += 1
             if p["submitted_at"]:
                 c["submitted"] += 1
             else:
                 c["not_submitted"].append(p["id"])
-            if self.needs_ai_self(p["condition"]):
-                if p["submitted_at"] and sentence_count and p["clip_done"] >= sentence_count:
-                    c["ai_ready"] += 1
-                elif p["submitted_at"]:
-                    c["ai_waiting"].append(p["id"])
+            if p["submitted_at"] and sentence_count and p["clip_done"] >= sentence_count:
+                c["ai_ready"] += 1
+            elif p["submitted_at"]:
+                c["ai_waiting"].append(p["id"])
         return list(out.values())
 
     def delete_participant(self, pid: str) -> None:
@@ -415,7 +392,7 @@ class Store:
     def all_recordings(self) -> list[sqlite3.Row]:
         with self.read() as conn:
             return conn.execute(
-                """SELECT r.*, p.class_name, p.condition FROM recordings r
+                """SELECT r.*, p.class_name FROM recordings r
                    JOIN participants p ON p.id=r.participant_id ORDER BY r.participant_id, r.sentence_id"""
             ).fetchall()
 
@@ -434,7 +411,7 @@ class Store:
         return [(Path(r["path"]), r["text"]) for r in rows if Path(r["path"]).is_file()]
 
     def submit(self, pid: str) -> None:
-        """Lock in the home recordings. For the AI condition this (re)starts generation."""
+        """Lock in the home recordings; this (re)starts generating the student's AI clone."""
         with self.tx() as conn:
             conn.execute("UPDATE participants SET submitted_at=? WHERE id=?", (time.time(), pid))
             old = conn.execute("SELECT path FROM clips WHERE participant_id=?", (pid,)).fetchall()
@@ -508,26 +485,7 @@ class Store:
         self.sync_clips()
         self.sync_standard()
 
-    def set_native_audio(self, sid: int, data: bytes, ext: str) -> None:
-        cur = self.get_sentence(sid)
-        if cur is None:
-            raise KeyError(sid)
-        path = self.native_dir / f"{sid}-{uuid.uuid4().hex[:8]}{ext}"
-        path.write_bytes(data)
-        with self.tx() as conn:
-            conn.execute("UPDATE sentences SET native_path=? WHERE id=?", (str(path), sid))
-        if cur["native_path"]:
-            Path(cur["native_path"]).unlink(missing_ok=True)
-
-    def clear_native_audio(self, sid: int) -> None:
-        cur = self.get_sentence(sid)
-        with self.tx() as conn:
-            conn.execute("UPDATE sentences SET native_path=NULL WHERE id=?", (sid,))
-        if cur and cur["native_path"]:
-            Path(cur["native_path"]).unlink(missing_ok=True)
-
     def delete_sentence(self, sid: int) -> None:
-        cur = self.get_sentence(sid)
         with self.tx() as conn:
             old = conn.execute(
                 "SELECT path FROM clips WHERE sentence_id=? UNION ALL SELECT path FROM recordings WHERE sentence_id=?",
@@ -542,8 +500,6 @@ class Store:
         for r in old:
             if r["path"]:
                 Path(r["path"]).unlink(missing_ok=True)
-        if cur and cur["native_path"]:
-            Path(cur["native_path"]).unlink(missing_ok=True)
 
     # ---- the student's view ---------------------------------------------------
 
@@ -551,7 +507,7 @@ class Store:
         with self.read() as conn:
             rows = conn.execute(
                 """
-                SELECT s.id AS sentence_id, s.text, s.lang, s.native_path,
+                SELECT s.id AS sentence_id, s.text, s.lang,
                        r.seconds AS recorded_seconds, r.created_at AS recorded_at,
                        c.id AS clip_id, c.status AS clip_status, c.approved,
                        sc.status AS standard_status, sc.path AS standard_path
@@ -566,23 +522,18 @@ class Store:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    # ---- clips (AI self-voice) ----------------------------------------------
+    # ---- clips (AI clone) -----------------------------------------------------
 
     def sync_clips(self, participant_id: str | None = None) -> int:
-        """Queue an AI self-voice clip for every (submitted student whose condition hears it,
-        active sentence) pair without one."""
-        conditions = [c for c in CONDITIONS if self.needs_ai_self(c)]
-        if not conditions:
-            return 0
+        """Queue an AI clone clip for every (submitted student, active sentence) pair without one."""
         now = time.time()
-        sql = f"""
+        sql = """
             INSERT OR IGNORE INTO clips(participant_id, sentence_id, status, created_at, updated_at)
             SELECT p.id, s.id, 'queued', ?, ?
             FROM participants p JOIN sentences s
-            WHERE p.condition IN ({",".join("?" * len(conditions))})
-              AND p.submitted_at IS NOT NULL AND p.active = 1 AND s.active = 1
+            WHERE p.submitted_at IS NOT NULL AND p.active = 1 AND s.active = 1
         """
-        params: list = [now, now, *conditions]
+        params: list = [now, now]
         if participant_id is not None:
             sql += " AND p.id = ?"
             params.append(participant_id)
@@ -690,12 +641,15 @@ class Store:
                 (time.time(),),
             ).rowcount
 
-    def requeue_standard(self, sid: int | None = None) -> int:
+    def requeue_standard(self, sid: int | None = None, lang: str | None = None) -> int:
         sql = "UPDATE standard_clips SET status='queued', error=NULL, updated_at=? WHERE status != 'processing'"
         params: list = [time.time()]
         if sid is not None:
             sql += " AND sentence_id=?"
             params.append(sid)
+        if lang is not None:
+            sql += " AND sentence_id IN (SELECT id FROM sentences WHERE lang=?)"
+            params.append(lang)
         with self.tx() as conn:
             return conn.execute(sql, params).rowcount
 
@@ -706,6 +660,13 @@ class Store:
                    JOIN sentences s ON s.id = sc.sentence_id WHERE sc.sentence_id=?""",
                 (sid,),
             ).fetchone()
+
+    def standard_failures(self) -> list[dict]:
+        with self.read() as conn:
+            return [dict(r) for r in conn.execute(
+                """SELECT sc.sentence_id, sc.error, s.text FROM standard_clips sc
+                   JOIN sentences s ON s.id = sc.sentence_id
+                   WHERE sc.status='failed' AND s.active=1 ORDER BY s.sort_order, s.id""")]
 
     def standard_status(self) -> dict[int, dict]:
         with self.read() as conn:
@@ -762,7 +723,7 @@ class Store:
     def list_events(self) -> list[sqlite3.Row]:
         with self.read() as conn:
             return conn.execute(
-                """SELECT e.*, s.text, p.class_name, p.condition FROM events e
+                """SELECT e.*, s.text, p.class_name FROM events e
                    LEFT JOIN sentences s ON s.id=e.sentence_id
                    LEFT JOIN participants p ON p.id=e.participant_id
                    ORDER BY e.id"""

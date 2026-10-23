@@ -59,6 +59,7 @@ class XTTSEngine:
 
     def synthesize_standard(self, text: str, lang: str, voice: str, out_wav: Path,
                             expected_seconds: float | None = None) -> None:
+        voice = voice or self.default_standard_voice(lang)
         voices = self.standard_voices()
         if voices and voice not in voices:
             raise ValueError(f"標準の声「{voice}」はありません。候補: {', '.join(voices[:8])} など")
@@ -66,6 +67,9 @@ class XTTSEngine:
 
     def standard_voices(self) -> list[str]:
         return list(self.tts.speakers or [])
+
+    def default_standard_voice(self, lang: str) -> str:
+        return "Ana Florence"
 
     def _generate(self, out_wav: Path, expected_seconds: float | None, **inputs) -> None:
         import numpy as np

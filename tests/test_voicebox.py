@@ -58,8 +58,10 @@ def make_handler(state: FakeVoicebox):
             if self.path == "/profiles/presets/kokoro":
                 return self._send(200, {"engine": "kokoro", "voices": [
                     {"voice_id": "af_heart", "name": "Heart", "gender": "female", "language": "en"}]})
-            if self.path.startswith("/profiles/presets/"):
-                return self._send(200, {"voices": []})
+            if self.path == "/profiles/presets/qwen_custom_voice":
+                return self._send(200, {"engine": "qwen_custom_voice", "voices": [
+                    {"voice_id": "Ryan", "name": "Ryan", "gender": "male", "language": "en"},
+                    {"voice_id": "Ono_Anna", "name": "Ono Anna", "gender": "female", "language": "ja"}]})
             m = re.fullmatch(r"/history/([\w-]+)", self.path)
             if m:
                 gen = state.generations.get(m.group(1))
@@ -171,7 +173,7 @@ def test_clone_generate_and_cleanup(voicebox, tmp_path):
 def test_standard_voice_preset(voicebox, tmp_path):
     state, url = voicebox
     engine = VoiceboxEngine(base_url=url, poll_seconds=0.01)
-    assert engine.standard_voices() == ["kokoro:af_heart"]
+    assert engine.standard_voices() == ["kokoro:af_heart", "qwen_custom_voice:Ryan", "qwen_custom_voice:Ono_Anna"]
     out = tmp_path / "std.wav"
     engine.synthesize_standard("I like reading books.", "en", "Ana Florence", out)  # XTTS name -> default
     (profile,) = state.profiles.values()
@@ -206,8 +208,7 @@ def test_app_end_to_end_with_voicebox(voicebox, tmp_path):
     with TestClient(app) as admin, TestClient(app) as kid:
         admin.post("/api/admin/login", json={"password": "pw"})
         admin.post("/api/admin/sentences", json={"text": "I like reading books."})
-        admin.put("/api/admin/settings", json={"listen_sets": {"ai": ["own", "ai_self", "standard"]}})
-        (p,) = admin.post("/api/admin/participants", json={"count": 1, "condition": "ai"}).json()
+        (p,) = admin.post("/api/admin/participants", json={"count": 1}).json()
         login(kid, p)
         sid = kid.get("/api/me").json()["items"][0]["sentence_id"]
         kid.post(f"/api/recordings/{sid}", files={"file": ("v.wav", make_wav(4.0), "audio/wav")})
@@ -217,7 +218,18 @@ def test_app_end_to_end_with_voicebox(voicebox, tmp_path):
         audios = kid.get("/api/me").json()["items"][0]["audios"]
         assert all(a["url"] for a in audios), audios
         names = sorted(pr["name"] for pr in state.profiles.values())
-        assert names[0].startswith("ondoku-P001-") and names[1] == "ondoku-standard-kokoro-af_heart"
+        assert names[0].startswith("ondoku-P001-") and names[1] == "ondoku-standard-kokoro-af_heart-en"
         # Deleting the student in the app removes their voice from Voicebox too.
         admin.delete(f"/api/admin/participants/{p['id']}")
-        assert [pr["name"] for pr in state.profiles.values()] == ["ondoku-standard-kokoro-af_heart"]
+        assert [pr["name"] for pr in state.profiles.values()] == ["ondoku-standard-kokoro-af_heart-en"]
+
+
+def test_japanese_text_gets_a_japanese_stock_voice(voicebox, tmp_path):
+    state, url = voicebox
+    engine = VoiceboxEngine(base_url=url, poll_seconds=0.01)
+    assert engine.default_standard_voice("en") == "kokoro:af_heart"
+    assert engine.default_standard_voice("ja") == "qwen_custom_voice:Ono_Anna"
+    engine.synthesize_standard("私は本日、情報基礎の授業を受けました。", "ja", "", tmp_path / "ja.wav")
+    (profile,) = state.profiles.values()
+    assert profile["preset_engine"] == "qwen_custom_voice" and profile["preset_voice_id"] == "Ono_Anna"
+    assert profile["language"] == "ja"

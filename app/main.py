@@ -23,8 +23,7 @@ from pydantic import BaseModel, Field
 from . import auth
 from .config import Settings, load_settings
 from .engines import load_engine
-from .store import (AUDIO_KINDS, CONDITIONS, NATIVE_EXTENSIONS, PARTICIPANT_ID_RE, Store, balanced_conditions,
-                    guess_lang)
+from .store import AUDIO_KINDS, LANGS, PARTICIPANT_ID_RE, Store, guess_lang
 from .worker import Worker
 
 log = logging.getLogger("ondoku")
@@ -47,7 +46,7 @@ class AdminLoginBody(BaseModel):
 
 
 class EventBody(BaseModel):
-    type: Literal["play_own", "play_ai_self", "play_standard", "play_native", "play_model", "survey_open"]
+    type: Literal["play_own", "play_ai_self", "play_standard", "survey_open"]
     sentence_id: int | None = None
     detail: str = Field(default="", max_length=200)
 
@@ -56,7 +55,6 @@ class CreateParticipantsBody(BaseModel):
     count: int = Field(ge=1, le=300)
     prefix: str = Field(default="P", pattern=r"^[A-Za-z]{0,8}$")
     class_name: str = Field(default="", max_length=64)
-    condition: Literal["ai", "native", "random"] = "random"
 
 
 class ImportParticipantsBody(BaseModel):
@@ -66,7 +64,6 @@ class ImportParticipantsBody(BaseModel):
 class UpdateParticipantBody(BaseModel):
     active: bool | None = None
     class_name: str | None = Field(default=None, max_length=64)
-    condition: Literal["ai", "native"] | None = None
 
 
 class SentenceBody(BaseModel):
@@ -96,8 +93,8 @@ class SettingsBody(BaseModel):
     allow_controls: bool | None = None
     listen_after_submit: bool | None = None
     survey_url: str | None = Field(default=None, max_length=2000)
-    standard_voice: str | None = Field(default=None, min_length=1, max_length=100)
-    listen_sets: dict[Literal["ai", "native"], list[Literal["own", "ai_self", "standard", "native"]]] | None = None
+    # Stock voice per language ("" = let the engine choose one that speaks it).
+    standard_voices: dict[Literal["en", "ja"], str] | None = None
 
 
 # ---- helpers -----------------------------------------------------------------
@@ -160,10 +157,9 @@ def ensure_admin_password(store: Store, settings: Settings) -> None:
 
 
 AUDIO_LABELS = {
-    "own": "自分の音読",
-    "ai_self": "AIの声（自分の声）",
-    "standard": "AIの声（標準）",
-    "native": "ネイティブの音声",
+    "own": "自分の声",
+    "ai_self": "AI音声（クローン）",
+    "standard": "AI音声（標準）",
 }
 
 
@@ -171,8 +167,6 @@ def audio_path(store: Store, item: dict, kind: str) -> str | None:
     """File behind one of the sounds a student can hear for a sentence, or None if not ready."""
     if kind == "own":
         return item.get("own_path")
-    if kind == "native":
-        return item["native_path"]
     if kind == "standard":
         return item["standard_path"] if item["standard_status"] == "done" else None
     if kind == "ai_self":
@@ -183,15 +177,6 @@ def audio_path(store: Store, item: dict, kind: str) -> str | None:
         clip = store.get_clip(item["clip_id"])
         return clip["path"] if clip else None
     return None
-
-
-def labels_for(kinds: list[str]) -> dict[str, str]:
-    """With a single model voice (study 1) it is just 'お手本', so the condition stays hidden."""
-    models = [k for k in kinds if k != "own"]
-    out = {k: AUDIO_LABELS[k] for k in kinds}
-    if len(models) == 1:
-        out[models[0]] = "お手本"
-    return out
 
 
 # ---- app ---------------------------------------------------------------------
@@ -311,8 +296,6 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
     @app.get("/api/me")
     def me(p=Depends(participant)):
         phase = store.effective_phase(p)
-        kinds = store.listen_set(p["condition"])
-        labels = labels_for(kinds)
         items = []
         if phase != "closed":
             for it in items_with_paths(p):
@@ -329,11 +312,11 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
                     entry["audios"] = [
                         {
                             "kind": k,
-                            "label": labels[k],
+                            "label": AUDIO_LABELS[k],
                             "url": (entry["own_url"] if k == "own" else f"/api/model/{sid}/{k}")
                             if audio_path(store, it, k) else None,
                         }
-                        for k in kinds
+                        for k in AUDIO_KINDS
                     ]
                 items.append(entry)
         survey = store.get_setting("survey_url") or ""
@@ -383,7 +366,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
     def model_voice(sid: int, kind: str, p=Depends(participant)):
         if store.effective_phase(p) != "listen":
             raise HTTPException(409, "今はこの操作はできません。画面を読み込み直してください")
-        if kind not in AUDIO_KINDS or kind == "own" or kind not in store.listen_set(p["condition"]):
+        if kind not in AUDIO_KINDS or kind == "own":
             raise HTTPException(404, "音声がありません")
         item = next((i for i in items_with_paths(p) if i["sentence_id"] == sid), None)
         path = audio_path(store, item, kind) if item else None
@@ -427,10 +410,13 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
             "default_phase": store.get_setting("phase") or "record",
             "sentence_count": store.active_sentence_count(),
             "listen_after_submit": store.flag("listen_after_submit"),
-            "standard_voice": store.get_setting("standard_voice") or "",
-            "standard_voice_default": worker.default_standard_voice(),
+            "standard_voice": {lang: store.standard_voice(lang) for lang in LANGS},
+            "standard_voice_default": {lang: worker.default_standard_voice(lang) for lang in LANGS},
             "standard_voices": worker.standard_voices(),
-            "listen_sets": {c: store.listen_set(c) for c in CONDITIONS},
+            "standard_failures": [
+                {"sentence_id": f["sentence_id"], "text": f["text"], "error": (f["error"] or "").split("\n")[0]}
+                for f in store.standard_failures()
+            ],
         }
 
     @app.get("/api/admin/progress")
@@ -452,20 +438,19 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
             r["last_activity"] = fmt_time(r["last_activity"])
         return rows
 
-    def create_one(pid: str, class_name: str, condition: str) -> dict:
+    def create_one(pid: str, class_name: str) -> dict:
         code = auth.new_passcode()
-        store.add_participant(pid, auth.hash_secret(code), class_name, condition)
-        return {"id": pid, "passcode": code, "class_name": class_name, "condition": condition}
+        store.add_participant(pid, auth.hash_secret(code), class_name)
+        return {"id": pid, "passcode": code, "class_name": class_name}
 
     @app.post("/api/admin/participants")
     def create_participants(body: CreateParticipantsBody, _=Depends(admin)):
         ids = store.next_participant_ids(body.prefix.upper(), body.count)
-        conditions = balanced_conditions(len(ids)) if body.condition == "random" else [body.condition] * len(ids)
-        return [create_one(pid, body.class_name.strip(), cond) for pid, cond in zip(ids, conditions)]
+        return [create_one(pid, body.class_name.strip()) for pid in ids]
 
     @app.post("/api/admin/participants/import")
     def import_participants(body: ImportParticipantsBody, _=Depends(admin)):
-        """CSV lines: id,class,condition (condition = ai / native / random; header optional)."""
+        """CSV lines: id,class (header optional; further columns are ignored)."""
         rows = [r for r in csv.reader(io.StringIO(body.csv.strip())) if any(c.strip() for c in r)]
         if rows and rows[0] and rows[0][0].strip().lower() in {"id", "参加者id"}:
             rows = rows[1:]
@@ -473,27 +458,15 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         for n, r in enumerate(rows, 1):
             pid = (r[0] if r else "").strip().upper()
             cls = r[1].strip() if len(r) > 1 else ""
-            cond = (r[2].strip().lower() if len(r) > 2 else "") or "random"
             if not PARTICIPANT_ID_RE.match(pid):
                 errors.append(f"{n}行目: ID「{pid}」が不正です（英数字・-・_ のみ）")
             elif store.get_participant(pid) or any(pid == x[0] for x in parsed):
                 errors.append(f"{n}行目: ID「{pid}」はすでにあります")
-            elif cond not in (*CONDITIONS, "random"):
-                errors.append(f"{n}行目: 条件「{cond}」は ai / native / random のいずれかにしてください")
             else:
-                parsed.append((pid, cls, cond))
+                parsed.append((pid, cls))
         if errors:
             raise HTTPException(400, "\n".join(errors[:20]))
-        # 'random' rows are balanced within each class.
-        by_class: dict[str, list[int]] = {}
-        for i, (_, cls, cond) in enumerate(parsed):
-            if cond == "random":
-                by_class.setdefault(cls, []).append(i)
-        final = [cond for _, _, cond in parsed]
-        for indexes in by_class.values():
-            for i, cond in zip(indexes, balanced_conditions(len(indexes))):
-                final[i] = cond
-        return [create_one(pid, cls, cond) for (pid, cls, _), cond in zip(parsed, final)]
+        return [create_one(pid, cls) for pid, cls in parsed]
 
     def existing_participant(pid: str):
         p = store.get_participant(pid)
@@ -505,7 +478,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
     def update_participant(pid: str, body: UpdateParticipantBody, _=Depends(admin)):
         existing_participant(pid)
         store.update_participant(
-            pid, active=body.active, condition=body.condition,
+            pid, active=body.active,
             class_name=body.class_name.strip() if body.class_name is not None else None,
         )
         worker.wake()
@@ -556,7 +529,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         rows = store.list_sentences()
         std = store.standard_status()
         for r in rows:
-            r["has_native"] = bool(r.pop("native_path"))
+            r.pop("native_path", None)
             s = std.get(r["id"])
             r["standard_status"] = s["status"] if s else None
             r["standard_error"] = (s["error"] or "").split("\n")[0] if s else ""
@@ -588,24 +561,6 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         store.delete_sentence(sid)
         return {"ok": True}
 
-    @app.post("/api/admin/sentences/{sid}/native")
-    async def upload_native(sid: int, file: UploadFile = File(...), _=Depends(admin)):
-        if store.get_sentence(sid) is None:
-            raise HTTPException(404, "文が見つかりません")
-        ext = Path(file.filename or "").suffix.lower()
-        if ext not in NATIVE_EXTENSIONS:
-            raise HTTPException(400, "MP3・WAV・M4A・AAC・OGG のいずれかを選んでください")
-        data = await file.read(MAX_UPLOAD_BYTES + 1)
-        if len(data) > MAX_UPLOAD_BYTES:
-            raise HTTPException(413, "ファイルが大きすぎます")
-        store.set_native_audio(sid, data, ext)
-        return {"ok": True}
-
-    @app.delete("/api/admin/sentences/{sid}/native")
-    def delete_native(sid: int, _=Depends(admin)):
-        store.clear_native_audio(sid)
-        return {"ok": True}
-
     @app.get("/api/admin/sentences/{sid}/standard")
     def standard_audio(sid: int, _=Depends(admin)):
         s = store.get_standard(sid)
@@ -616,11 +571,6 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         store.requeue_standard(sid)
         worker.wake()
         return {"ok": True}
-
-    @app.get("/api/admin/sentences/{sid}/native")
-    def native_audio(sid: int, _=Depends(admin)):
-        s = store.get_sentence(sid)
-        return audio_response(s["native_path"] if s else None)
 
     # AI clips
 
@@ -675,14 +625,12 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
             store.set_setting("allow_controls", "1" if body.allow_controls else "0")
         if body.listen_after_submit is not None:
             store.set_setting("listen_after_submit", "1" if body.listen_after_submit else "0")
-        if body.listen_sets is not None:
-            for cond, kinds in body.listen_sets.items():
-                store.set_listen_set(cond, list(kinds))
-            worker.wake()
-        if body.standard_voice is not None and body.standard_voice.strip() != store.get_setting("standard_voice"):
-            store.set_setting("standard_voice", body.standard_voice.strip())
-            store.requeue_standard()
-            worker.wake()
+        for lang, voice in (body.standard_voices or {}).items():
+            voice = voice.strip()[:100]
+            if voice != store.standard_voice(lang):
+                store.set_setting(f"standard_voice:{lang}", voice)
+                store.requeue_standard(lang=lang)
+                worker.wake()
         if body.survey_url is not None:
             url = body.survey_url.strip()
             if url and not url.startswith(("https://", "http://")):
@@ -692,21 +640,21 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
 
     @app.get("/api/admin/events.csv")
     def events_csv(_=Depends(admin)):
-        rows = [["event_id", "datetime", "participant_id", "class", "condition", "type",
+        rows = [["event_id", "datetime", "participant_id", "class", "type",
                  "sentence_id", "sentence_text", "detail"]]
         for e in store.list_events():
             rows.append([e["id"], fmt_time(e["created_at"]), e["participant_id"], e["class_name"] or "",
-                         e["condition"] or "", e["type"], e["sentence_id"] or "", e["text"] or "", e["detail"]])
+                         e["type"], e["sentence_id"] or "", e["text"] or "", e["detail"]])
         return csv_response(rows, f"ondoku-events-{time.strftime('%Y%m%d-%H%M')}.csv")
 
     @app.get("/api/admin/participants.csv")
     def participants_csv(_=Depends(admin)):
         n = store.active_sentence_count()
-        rows = [["participant_id", "class", "condition", "active", "recorded", "sentences",
+        rows = [["participant_id", "class", "active", "recorded", "sentences",
                  "submitted_at", "ai_clips_done", "last_activity"]]
         for p in store.list_participants():
-            rows.append([p["id"], p["class_name"], p["condition"], p["active"], p["recorded"], n,
-                         fmt_time(p["submitted_at"]), p["clip_done"] if p["condition"] == "ai" else "",
+            rows.append([p["id"], p["class_name"], p["active"], p["recorded"], n,
+                         fmt_time(p["submitted_at"]), p["clip_done"],
                          fmt_time(p["last_activity"])])
         return csv_response(rows, f"ondoku-participants-{time.strftime('%Y%m%d-%H%M')}.csv")
 

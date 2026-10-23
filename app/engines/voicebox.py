@@ -5,7 +5,9 @@ on the same computer. Nothing goes to the internet except Voicebox's own model d
 
 - AI self-voice: one cloned voice profile per student, built from their recordings and the
   sentences they read (Voicebox needs the transcript of every sample).
-- Stock voice: a preset profile, e.g. "kokoro:af_heart" (engine:voice_id).
+- Stock voice: a preset profile, e.g. "kokoro:af_heart" (engine:voice_id). Unless the researcher
+  picks one, a voice that speaks the sentence's language is chosen (Kokoro's af_heart for
+  English; a Japanese speaker, preferably of Qwen CustomVoice, for Japanese).
 - Generation goes through POST /generate, which downloads a missing model by itself; the
   finished audio is fetched and the entry is deleted from Voicebox's history again.
 
@@ -32,6 +34,10 @@ PROFILE_PREFIX = "ondoku-"
 STANDARD_PREFIX = "ondoku-standard-"
 PRESET_ENGINES = ("kokoro", "qwen_custom_voice")
 LANGS = {"ja": "ja", "en": "en"}
+LANGUAGE_NAMES = {"ja": ("ja", "japanese", "日本語"), "en": ("en", "english", "英語")}
+# Kokoro voice ids start with a language letter: a/b = American/British English, j = Japanese.
+KOKORO_LETTERS = {"ja": ("j",), "en": ("a", "b")}
+DEFAULT_VOICE = {"en": "kokoro:af_heart"}
 
 
 class VoiceboxError(RuntimeError):
@@ -49,6 +55,7 @@ class VoiceboxEngine:
         self.timeout = timeout
         self.poll_seconds = poll_seconds
         self._profiles: dict[str, str] = {}  # profile name -> id
+        self._preset_cache: list[dict] | None = None
         try:
             self._call("GET", "/health")
         except VoiceboxError as exc:
@@ -159,7 +166,7 @@ class VoiceboxEngine:
         engine, _, voice_id = voice.partition(":")
         if engine not in PRESET_ENGINES or not voice_id:
             raise VoiceboxError(f"標準の声は「kokoro:af_heart」のように指定してください（今: {voice}）")
-        name = f"{STANDARD_PREFIX}{engine}-{voice_id}"
+        name = f"{STANDARD_PREFIX}{engine}-{voice_id}-{LANGS.get(lang, 'en')}"
         found = self._find_profile(name)
         if found:
             return found, engine
@@ -219,23 +226,54 @@ class VoiceboxEngine:
 
     def synthesize_standard(self, text: str, lang: str, voice: str, out_wav: Path,
                             expected_seconds: float | None = None) -> None:
-        if ":" not in voice:
-            voice = self.default_standard_voice()
+        if ":" not in voice:  # not chosen (or a name from another engine)
+            voice = self.default_standard_voice(lang)
         profile_id, engine = self._preset_profile(voice, lang)
         self._generate(profile_id, text, lang, engine, out_wav,
                        model_size=self.model_size if engine == "qwen_custom_voice" else None)
 
-    def standard_voices(self) -> list[str]:
-        voices = []
-        for engine in PRESET_ENGINES:
-            try:
-                listed = self._call("GET", f"/profiles/presets/{engine}") or {}
-            except VoiceboxError:
-                continue
-            for v in listed.get("voices", []):
-                voices.append(f"{engine}:{v['voice_id']}")
-        return voices
+    def _presets(self) -> list[dict]:
+        """Preset voices of every preset engine: {"voice": "engine:id", "engine", "id", "language"}."""
+        if self._preset_cache is None:
+            voices = []
+            for engine in PRESET_ENGINES:
+                try:
+                    listed = self._call("GET", f"/profiles/presets/{engine}") or {}
+                except VoiceboxError:
+                    continue
+                for v in listed.get("voices", []):
+                    voices.append({"voice": f"{engine}:{v['voice_id']}", "engine": engine, "id": v["voice_id"],
+                                   "language": str(v.get("language") or "").lower()})
+            if not voices:
+                return []  # Voicebox not answering yet: ask again next time
+            self._preset_cache = voices
+        return self._preset_cache
 
-    def default_standard_voice(self) -> str:
-        return "kokoro:af_heart"
+    def standard_voices(self) -> list[str]:
+        return [v["voice"] for v in self._presets()]
+
+    @staticmethod
+    def _speaks(voice: dict, lang: str) -> bool:
+        names = LANGUAGE_NAMES.get(lang, (lang,))
+        if voice["language"]:
+            return any(voice["language"].startswith(n) for n in names)
+        return voice["engine"] == "kokoro" and voice["id"].startswith(KOKORO_LETTERS.get(lang, ()))
+
+    def default_standard_voice(self, lang: str = "en") -> str:
+        presets = self._presets()
+        wanted = DEFAULT_VOICE.get(lang)
+        if wanted and (not presets or any(v["voice"] == wanted for v in presets)):
+            return wanted
+        for engine in ("qwen_custom_voice", "kokoro"):
+            for v in presets:
+                if v["engine"] == engine and self._speaks(v, lang):
+                    return v["voice"]
+        # Qwen CustomVoice speakers can read every language it supports.
+        for v in presets:
+            if v["engine"] == "qwen_custom_voice":
+                return v["voice"]
+        if not presets:
+            raise VoiceboxError("Voicebox から既成の声の一覧を取得できませんでした")
+        raise VoiceboxError(f"この言語（{lang}）を話せる既成の声が Voicebox にありません。"
+                            "管理画面「設定・出力」で標準AI音声の声を指定してください")
 

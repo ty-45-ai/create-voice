@@ -36,7 +36,7 @@
       <div id="tab-progress" class="tab">
         <div class="card">
           <h2>クラス別の進捗と段階</h2>
-          <p class="small">段階：<b>録音</b>＝家で教材を録音して提出 ／ <b>聴取</b>＝学校で自分の録音とお手本を聞く ／ <b>停止</b>＝利用不可。クラスごとに切り替えられます。</p>
+          <p class="small">段階：<b>録音</b>＝家で教材を録音して提出 ／ <b>聴取</b>＝自分の声 → AI音声（クローン） → AI音声（標準）の順に聞く ／ <b>停止</b>＝利用不可。クラスごとに切り替えられます。</p>
           <div class="inline-form" style="margin-bottom:12px">
             <label>まだ参加者がいないクラスも含めた既定の段階
               <select id="default-phase">
@@ -48,6 +48,7 @@
           </div>
           <div class="table-wrap"><table id="progress-table"></table></div>
         </div>
+        <div id="standard-alert" class="card hidden"></div>
         <div class="card stats" id="stats"></div>
       </div>
 
@@ -59,19 +60,12 @@
             <label>人数 <input id="create-count" type="number" min="1" max="300" value="35" required></label>
             <label>ID接頭辞（英字） <input id="create-prefix" value="P" maxlength="8" pattern="[A-Za-z]*"></label>
             <label>クラス <input id="create-class" maxlength="64" placeholder="例: 3-1"></label>
-            <label>条件
-              <select id="create-condition">
-                <option value="random">ランダムに半々</option>
-                <option value="ai">AI自己音声</option>
-                <option value="native">ネイティブ音声</option>
-              </select>
-            </label>
             <button class="primary" type="submit">発行する</button>
           </form>
           <details style="margin-top:12px">
             <summary>CSVで一括登録する</summary>
-            <p class="small">1行に「ID,クラス,条件」。条件は ai / native / random（random はクラスごとに半々）。例：<code>S001,3-1,random</code></p>
-            <textarea id="import-csv" rows="6" placeholder="S001,3-1,random&#10;S002,3-1,random"></textarea>
+            <p class="small">1行に「ID,クラス」。例：<code>S001,3-1</code></p>
+            <textarea id="import-csv" rows="6" placeholder="S001,3-1&#10;S002,3-1"></textarea>
             <button id="import-button" class="primary" type="button">登録する</button>
           </details>
           <div id="created" class="hidden">
@@ -113,9 +107,8 @@
         </div>
         <div class="card">
           <h2>教材一覧</h2>
-          <p class="small">ネイティブ音声はアップロードしたもの、標準AI音声は文を追加すると自動で作られます（全員共通）。文を変更すると、その文のAI音声はつくり直されます。</p>
+          <p class="small">AI音声（標準）は教材を追加すると自動で作られます（全員共通）。AI音声（クローン）は生徒が提出すると、その生徒の声で作られます。文を変更すると、その文のAI音声はつくり直されます。</p>
           <div class="table-wrap"><table id="sentences-table"></table></div>
-          <input id="native-file" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg" hidden>
         </div>
       </div>
 
@@ -144,16 +137,18 @@
       <!-- 設定・出力 -->
       <div id="tab-settings" class="tab hidden">
         <div class="card">
-          <h2>生徒が聞ける音声</h2>
-          <p class="small">条件ごとに、聴取画面に並べる音声を選びます（左から順に表示）。「自分の音読」を含めると、ほかの音声は自分の音読を最後まで聞いてから押せるようになります。お手本が1種類だけのときは、生徒には「お手本」とだけ表示されます。</p>
-          <div class="table-wrap"><table id="listen-matrix"></table></div>
-          <div class="inline-form" style="margin-top:12px">
-            <label>標準AI音声の声（Voicebox なら <code>kokoro:af_heart</code> のように「エンジン:声」）
-              <input id="standard-voice" list="standard-voice-list" placeholder="Ana Florence">
-              <datalist id="standard-voice-list"></datalist>
+          <h2>AI音声（標準）の声</h2>
+          <p class="small">生徒は全員、練習ごとに <b>① 自分の声 → ② AI音声（クローン） → ③ AI音声（標準）</b> の順に聞きます。②と③は、①を最後まで聞くと押せるようになります。</p>
+          <div class="inline-form">
+            <label>英語の教材
+              <input id="standard-voice-en" list="standard-voice-list">
             </label>
+            <label>日本語の教材
+              <input id="standard-voice-ja" list="standard-voice-list">
+            </label>
+            <datalist id="standard-voice-list"></datalist>
           </div>
-          <p class="small">候補はエンジンに接続すると入力欄に表示されます。変更すると、標準AI音声は全文つくり直されます。</p>
+          <p class="small">空欄なら、その言語を話せる声を自動で選びます（灰色の文字が今使われる声）。Voicebox の声は <code>kokoro:af_heart</code> のように「エンジン:声」で指定します（入力欄をクリックすると候補が出ます）。変更すると、その言語の教材のAI音声（標準）はつくり直されます。</p>
         </div>
         <div class="card">
           <h2>聴取画面の設定</h2>
