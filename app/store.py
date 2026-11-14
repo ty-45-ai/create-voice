@@ -103,6 +103,8 @@ MIGRATIONS = {
         "class_name": "TEXT NOT NULL DEFAULT ''",
         "condition": "TEXT NOT NULL DEFAULT 'ai'",
         "submitted_at": "REAL",
+        # The password itself, so the researcher can look it up and print it again at any time.
+        "passcode": "TEXT",
     },
     "sentences": {"native_path": "TEXT"},
 }
@@ -268,15 +270,15 @@ class Store:
             n += 1
         return ids
 
-    def add_participant(self, pid: str, passcode_hash: str, class_name: str) -> None:
+    def add_participant(self, pid: str, passcode_hash: str, class_name: str, passcode: str) -> None:
         with self.tx() as conn:
             conn.execute(
-                "INSERT INTO participants(id, passcode_hash, class_name, created_at) VALUES (?, ?, ?, ?)",
-                (pid, passcode_hash, class_name, time.time()),
+                "INSERT INTO participants(id, passcode_hash, passcode, class_name, created_at) VALUES (?, ?, ?, ?, ?)",
+                (pid, passcode_hash, passcode, class_name, time.time()),
             )
 
     def update_participant(self, pid: str, *, active: bool | None = None, class_name: str | None = None,
-                           passcode_hash: str | None = None) -> None:
+                           passcode_hash: str | None = None, passcode: str | None = None) -> None:
         with self.tx() as conn:
             if active is not None:
                 conn.execute("UPDATE participants SET active=? WHERE id=?", (int(active), pid))
@@ -285,7 +287,8 @@ class Store:
             if class_name is not None:
                 conn.execute("UPDATE participants SET class_name=? WHERE id=?", (class_name, pid))
             if passcode_hash is not None:
-                conn.execute("UPDATE participants SET passcode_hash=? WHERE id=?", (passcode_hash, pid))
+                conn.execute("UPDATE participants SET passcode_hash=?, passcode=? WHERE id=?",
+                             (passcode_hash, passcode, pid))
                 conn.execute("DELETE FROM sessions WHERE role='participant' AND subject=?", (pid,))
         self.sync_clips(participant_id=pid)
 
@@ -293,7 +296,7 @@ class Store:
         with self.read() as conn:
             rows = conn.execute(
                 """
-                SELECT p.id, p.class_name, p.active, p.submitted_at, p.created_at,
+                SELECT p.id, p.passcode, p.class_name, p.active, p.submitted_at, p.created_at,
                   (SELECT COUNT(*) FROM recordings r JOIN sentences s ON s.id=r.sentence_id
                      WHERE r.participant_id=p.id AND s.active=1) AS recorded,
                   (SELECT COUNT(*) FROM clips c JOIN sentences s ON s.id=c.sentence_id

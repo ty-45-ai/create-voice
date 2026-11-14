@@ -7,6 +7,7 @@ import io
 import logging
 import mimetypes
 import os
+import re
 import time
 import wave
 import zipfile
@@ -32,6 +33,7 @@ MAX_UPLOAD_BYTES = 30 * 1024 * 1024
 MIN_RECORDING_SECONDS = 0.5
 MAX_RECORDING_SECONDS = 300.0
 MIN_VOICE_SAMPLE_SECONDS = 3.0
+PASSWORD_RE = re.compile(r"^[a-z0-9]{4,32}$")
 
 
 # ---- request bodies ----------------------------------------------------------
@@ -55,6 +57,10 @@ class CreateParticipantsBody(BaseModel):
     count: int = Field(ge=1, le=300)
     prefix: str = Field(default="P", pattern=r"^[A-Za-z]{0,8}$")
     class_name: str = Field(default="", max_length=64)
+
+
+class PasswordBody(BaseModel):
+    password: str | None = Field(default=None, max_length=64)  # None or "" = make one
 
 
 class ImportParticipantsBody(BaseModel):
@@ -263,7 +269,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         p = store.get_participant(pid) if PARTICIPANT_ID_RE.match(pid) else None
         if p is None or not p["active"] or not auth.verify_secret(body.passcode.strip().lower(), p["passcode_hash"]):
             throttle.fail(key)
-            raise HTTPException(401, "ID または あいことば が違います")
+            raise HTTPException(401, "ID または パスワード が違います")
         throttle.reset(key)
         token = auth.new_token()
         store.create_session(token, "participant", pid, auth.PARTICIPANT_TTL)
@@ -423,9 +429,18 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
             r["last_activity"] = fmt_time(r["last_activity"])
         return rows
 
-    def create_one(pid: str, class_name: str) -> dict:
-        code = auth.new_passcode()
-        store.add_participant(pid, auth.hash_secret(code), class_name)
+    def check_password(raw: str | None) -> str | None:
+        """A password chosen by the researcher, normalised as at login (lower case); None = make one."""
+        code = (raw or "").strip().lower()
+        if not code:
+            return None
+        if not PASSWORD_RE.match(code):
+            raise ValueError(code)
+        return code
+
+    def create_one(pid: str, class_name: str, code: str | None = None) -> dict:
+        code = code or auth.new_passcode()
+        store.add_participant(pid, auth.hash_secret(code), class_name, code)
         return {"id": pid, "passcode": code, "class_name": class_name}
 
     @app.post("/api/admin/participants")
@@ -435,7 +450,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
 
     @app.post("/api/admin/participants/import")
     def import_participants(body: ImportParticipantsBody, _=Depends(admin)):
-        """CSV lines: id,class (header optional; further columns are ignored)."""
+        """CSV lines: id,class,password (header optional; an empty password is made up)."""
         rows = [r for r in csv.reader(io.StringIO(body.csv.strip())) if any(c.strip() for c in r)]
         if rows and rows[0] and rows[0][0].strip().lower() in {"id", "参加者id"}:
             rows = rows[1:]
@@ -443,15 +458,20 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         for n, r in enumerate(rows, 1):
             pid = (r[0] if r else "").strip().upper()
             cls = r[1].strip() if len(r) > 1 else ""
+            try:
+                code = check_password(r[2] if len(r) > 2 else "")
+            except ValueError:
+                errors.append(f"{n}行目: パスワードは英数字4〜32文字にしてください")
+                continue
             if not PARTICIPANT_ID_RE.match(pid):
                 errors.append(f"{n}行目: ID「{pid}」が不正です（英数字・-・_ のみ）")
             elif store.get_participant(pid) or any(pid == x[0] for x in parsed):
                 errors.append(f"{n}行目: ID「{pid}」はすでにあります")
             else:
-                parsed.append((pid, cls))
+                parsed.append((pid, cls, code))
         if errors:
             raise HTTPException(400, "\n".join(errors[:20]))
-        return [create_one(pid, cls) for pid, cls in parsed]
+        return [create_one(pid, cls, code) for pid, cls, code in parsed]
 
     def existing_participant(pid: str):
         p = store.get_participant(pid)
@@ -469,11 +489,25 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         worker.wake()
         return {"ok": True}
 
+    @app.post("/api/admin/participants/fill-missing-passwords")
+    def fill_missing_passwords(_=Depends(admin)):
+        """Students made before passwords were kept have none on record: give them new ones."""
+        out = []
+        for p in store.list_participants():
+            if not p["passcode"]:
+                code = auth.new_passcode()
+                store.update_participant(p["id"], passcode_hash=auth.hash_secret(code), passcode=code)
+                out.append({"id": p["id"], "passcode": code, "class_name": p["class_name"]})
+        return out
+
     @app.post("/api/admin/participants/{pid}/passcode")
-    def reset_passcode(pid: str, _=Depends(admin)):
+    def reset_passcode(pid: str, body: PasswordBody | None = None, _=Depends(admin)):
         existing_participant(pid)
-        code = auth.new_passcode()
-        store.update_participant(pid, passcode_hash=auth.hash_secret(code))
+        try:
+            code = check_password(body.password if body else None) or auth.new_passcode()
+        except ValueError:
+            raise HTTPException(400, "パスワードは英数字4〜32文字にしてください") from None
+        store.update_participant(pid, passcode_hash=auth.hash_secret(code), passcode=code)
         return {"id": pid, "passcode": code}
 
     @app.post("/api/admin/participants/{pid}/reopen")
@@ -633,10 +667,10 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
     @app.get("/api/admin/participants.csv")
     def participants_csv(_=Depends(admin)):
         n = store.active_sentence_count()
-        rows = [["participant_id", "class", "active", "recorded", "sentences",
+        rows = [["participant_id", "password", "class", "active", "recorded", "sentences",
                  "submitted_at", "ai_clips_done", "last_activity"]]
         for p in store.list_participants():
-            rows.append([p["id"], p["class_name"], p["active"], p["recorded"], n,
+            rows.append([p["id"], p["passcode"] or "", p["class_name"], p["active"], p["recorded"], n,
                          fmt_time(p["submitted_at"]), p["clip_done"],
                          fmt_time(p["last_activity"])])
         return csv_response(rows, f"ondoku-participants-{time.strftime('%Y%m%d-%H%M')}.csv")

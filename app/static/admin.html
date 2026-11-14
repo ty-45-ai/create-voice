@@ -62,18 +62,26 @@
           </form>
           <details style="margin-top:12px">
             <summary>CSVで一括登録する</summary>
-            <p class="small">1行に「ID,クラス」。例：<code>S001,3-1</code></p>
-            <textarea id="import-csv" rows="6" placeholder="S001,3-1&#10;S002,3-1"></textarea>
+            <p class="small">1行に「ID,クラス,パスワード」。パスワードを省略すると自動で作ります（英数字4〜32文字。大文字・小文字は区別しません）。例：<code>S001,3-1</code>、<code>S002,3-1,sakura25</code></p>
+            <textarea id="import-csv" rows="6" placeholder="S001,3-1&#10;S002,3-1,sakura25"></textarea>
             <button id="import-button" class="primary" type="button">登録する</button>
           </details>
           <div id="created" class="hidden">
-            <p class="notice warn">あいことばはこの画面でしか表示されません。CSVを保存し、氏名との対応表はアプリの外で管理してください。</p>
-            <button id="created-csv" type="button">CSVを保存</button>
+            <p class="notice">発行しました。パスワードは下の「参加者一覧」でいつでも確認・変更・CSV保存できます。氏名との対応表はアプリの外で管理してください。</p>
+            <button id="created-csv" type="button">今回発行した分をCSVで保存</button>
             <div class="table-wrap"><table id="created-table"></table></div>
           </div>
         </div>
         <div class="card">
           <h2>参加者一覧</h2>
+          <div class="row" style="justify-content:flex-start;margin-bottom:10px">
+            <label class="check-row" style="margin:0"><input id="show-passwords" type="checkbox"> パスワードを表示する</label>
+            <button id="passwords-csv" type="button">ID・パスワード一覧をCSVで保存</button>
+          </div>
+          <div id="missing-passwords" class="notice warn hidden">
+            <span id="missing-passwords-text"></span>
+            <button id="fill-passwords" type="button">まとめて新しいパスワードを発行する</button>
+          </div>
           <div class="table-wrap"><table id="participants-table"></table></div>
         </div>
         <div id="recordings-card" class="card hidden">

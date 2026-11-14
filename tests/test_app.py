@@ -376,3 +376,43 @@ def test_admin_and_student_logins_coexist_in_one_browser(env):
     admin.post("/api/logout")
     assert admin.get("/api/me").status_code == 401
     assert admin.get("/api/admin/status").status_code == 200
+
+
+def test_passwords_can_be_looked_up_changed_and_exported(env):
+    app, admin, client = env
+    (p,) = admin.post("/api/admin/participants", json={"count": 1, "class_name": "2-1"}).json()
+    rows = admin.get("/api/admin/participants").json()
+    assert rows[0]["passcode"] == p["passcode"]  # visible to the researcher at any time
+    # A password the researcher chooses; case does not matter when logging in.
+    r = admin.post(f"/api/admin/participants/{p['id']}/passcode", json={"password": "Sakura25"})
+    assert r.json() == {"id": p["id"], "passcode": "sakura25"}
+    kid = client()
+    assert kid.post("/api/login", json={"id": p["id"], "passcode": p["passcode"]}).status_code == 401
+    assert kid.post("/api/login", json={"id": p["id"], "passcode": "SAKURA25"}).status_code == 200
+    assert admin.post(f"/api/admin/participants/{p['id']}/passcode", json={"password": "a b"}).status_code == 400
+    # Empty = a new random one.
+    new = admin.post(f"/api/admin/participants/{p['id']}/passcode", json={"password": ""}).json()["passcode"]
+    assert len(new) == 6 and new != "sakura25"
+    # CSV import may set passwords; the participants CSV carries them.
+    created = admin.post("/api/admin/participants/import", json={"csv": "S001,2-2,hikari7\nS002,2-2"}).json()
+    assert created[0]["passcode"] == "hikari7" and len(created[1]["passcode"]) == 6
+    bad = admin.post("/api/admin/participants/import", json={"csv": "S003,2-2,x"})
+    assert bad.status_code == 400 and "パスワード" in bad.text
+    csv_text = admin.get("/api/admin/participants.csv").text
+    assert "password" in csv_text and "hikari7" in csv_text and new in csv_text
+
+
+def test_fill_missing_passwords_for_students_made_before(env):
+    import sqlite3
+
+    app, admin, client = env
+    made = admin.post("/api/admin/participants", json={"count": 2}).json()
+    conn = sqlite3.connect(app.state.store.db_path)
+    conn.execute("UPDATE participants SET passcode=NULL WHERE id=?", (made[0]["id"],))
+    conn.commit()
+    conn.close()
+    filled = admin.post("/api/admin/participants/fill-missing-passwords").json()
+    assert [f["id"] for f in filled] == [made[0]["id"]]
+    kid = client()
+    assert kid.post("/api/login", json={"id": made[0]["id"], "passcode": filled[0]["passcode"]}).status_code == 200
+    assert all(r["passcode"] for r in admin.get("/api/admin/participants").json())

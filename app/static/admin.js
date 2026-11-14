@@ -178,7 +178,7 @@ function showCreated(rows) {
   lastCreated = rows;
   $("created").classList.remove("hidden");
   $("created-table").replaceChildren(
-    h("tr", {}, ["ID", "あいことば", "クラス"].map((t) => h("th", {}, t))),
+    h("tr", {}, ["ID", "パスワード", "クラス"].map((t) => h("th", {}, t))),
     ...rows.map((p) =>
       h("tr", {},
         h("td", { class: "mono" }, p.id), h("td", { class: "mono" }, p.passcode),
@@ -207,14 +207,39 @@ $("import-button").addEventListener("click", async () => {
 });
 
 $("created-csv").addEventListener("click", () => {
-  downloadCsv("participants-passcodes.csv", [
-    ["id", "passcode", "class", "url"],
-    ...lastCreated.map((p) => [p.id, p.passcode, p.class_name, location.origin + "/"]),
-  ]);
+  downloadCsv("id-password-new.csv", passwordRows(lastCreated));
 });
+
+// ID, password, class and the address to open, for handing out to students.
+function passwordRows(list) {
+  return [["ID", "パスワード", "クラス", "アドレス"],
+    ...list.map((p) => [p.id, p.passcode || "", p.class_name, location.origin + "/"])];
+}
+
+let participantRows = [];
+$("show-passwords").addEventListener("change", () => loadParticipants());
+$("passwords-csv").addEventListener("click", () => {
+  downloadCsv("id-password.csv", passwordRows(participantRows));
+});
+
+$("fill-passwords").addEventListener("click", async () => {
+  if (!confirm("パスワードが「不明」の生徒全員に、新しいパスワードを発行します。\n"
+    + "その生徒たちは、今までのパスワードではログインできなくなります。よろしいですか？")) return;
+  showCreated(await api("/api/admin/participants/fill-missing-passwords", { method: "POST" }));
+});
+
+function passwordCell(p) {
+  if (!p.passcode) return h("span", { class: "small" }, "不明");
+  return $("show-passwords").checked ? p.passcode : "••••••";
+}
 
 async function loadParticipants() {
   const [rows] = await Promise.all([api("/api/admin/participants"), loadStatus()]);
+  participantRows = rows;
+  const missing = rows.filter((p) => !p.passcode).length;
+  $("missing-passwords").classList.toggle("hidden", !missing);
+  $("missing-passwords-text").textContent =
+    `パスワードが「不明」の生徒が ${missing} 人います（この機能を入れる前に発行した生徒）。 `;
   const total = status.sentence_count;
   const sel = $("clip-participant");
   const keep = sel.value;
@@ -224,10 +249,11 @@ async function loadParticipants() {
 
   const table = $("participants-table");
   table.replaceChildren(
-    h("tr", {}, ["ID", "クラス", "録音", "提出", "AI音声（クローン）", "最終利用", "操作"].map((t) => h("th", {}, t))),
+    h("tr", {}, ["ID", "パスワード", "クラス", "録音", "提出", "AI音声（クローン）", "最終利用", "操作"].map((t) => h("th", {}, t))),
     ...rows.map((p) =>
       h("tr", { class: p.active ? "" : "inactive" },
         h("td", { class: "mono" }, p.id, p.active ? "" : h("div", { class: "small" }, "停止中")),
+        h("td", { class: "mono" }, passwordCell(p)),
         h("td", {}, p.class_name || "—"),
         h("td", { class: "num" }, `${p.recorded} / ${total}`,
           p.recorded ? [" ", h("button", { onclick: () => showRecordings(p) }, "聞く")] : ""),
@@ -239,7 +265,7 @@ async function loadParticipants() {
           h("div", { class: "actions" },
             h("button", { onclick: () => editParticipant(p) }, "クラス変更"),
             p.submitted_at ? h("button", { onclick: () => reopen(p) }, "提出を取り消す") : null,
-            h("button", { onclick: () => resetPass(p) }, "あいことば再発行"),
+            h("button", { onclick: () => resetPass(p) }, "パスワード変更"),
             h("button", { onclick: () => toggleActive(p) }, p.active ? "停止" : "再開"),
             h("button", { class: "danger", onclick: () => removeParticipant(p) }, "データ削除"),
           ),
@@ -247,7 +273,7 @@ async function loadParticipants() {
       ),
     ),
   );
-  if (!rows.length) emptyRow(table, 7, "まだ参加者がいません。");
+  if (!rows.length) emptyRow(table, 8, "まだ参加者がいません。");
 }
 
 async function showRecordings(p) {
@@ -286,9 +312,12 @@ async function toggleActive(p) {
 }
 
 async function resetPass(p) {
-  if (!confirm(`${p.id} のあいことばを再発行しますか？（古いあいことばは使えなくなります）`)) return;
-  const r = await api(`/api/admin/participants/${p.id}/passcode`, { method: "POST" });
-  prompt(`${r.id} の新しいあいことば（この画面でしか表示されません）`, r.passcode);
+  const typed = prompt(
+    `${p.id} の新しいパスワード（英数字4〜32文字。空欄のままOKを押すと自動で作ります）\n古いパスワードは使えなくなります。`, "");
+  if (typed === null) return;
+  const r = await api(`/api/admin/participants/${p.id}/passcode`, { json: { password: typed.trim() } });
+  alert(`${r.id} の新しいパスワード：${r.passcode}`);
+  loadParticipants();
 }
 
 async function removeParticipant(p) {

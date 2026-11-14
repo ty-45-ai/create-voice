@@ -54,7 +54,7 @@ $("login-form").addEventListener("submit", async (e) => {
     $("login-pass").value = "";
     await load();
   } catch (err) {
-    $("login-error").textContent = err.message === "login" ? "ID または あいことば が違います" : err.message;
+    $("login-error").textContent = err.message === "login" ? "ID または パスワード が違います" : err.message;
   }
 });
 
