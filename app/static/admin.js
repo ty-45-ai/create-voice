@@ -252,11 +252,7 @@ $("clear-selection").addEventListener("click", () => {
 $("bulk-delete").addEventListener("click", async () => {
   const ids = [...selected];
   const shown = ids.slice(0, 10).join("、") + (ids.length > 10 ? ` ほか${ids.length - 10}人` : "");
-  const typed = prompt(
-    `${ids.length}人（${shown}）の録音・AI音声・利用ログをすべて削除します。元に戻せません。\n`
-    + "確認のため「削除」と入力してください。");
-  if (typed === null) return;
-  if (typed.trim() !== "削除") return alert("入力が一致しないため、削除を中止しました。");
+  if (!confirm(`${ids.length}人（${shown}）の録音・AI音声・利用ログをすべて削除します。元に戻せません。\n削除しますか？`)) return;
   const r = await api("/api/admin/participants/delete", { json: { ids } });
   selected.clear();
   $("recordings-card").classList.add("hidden");
@@ -384,11 +380,7 @@ async function resetPass(p) {
 }
 
 async function removeParticipant(p) {
-  const typed = prompt(
-    `${p.id} の録音・AI音声・利用ログをすべて削除します。元に戻せません。\n確認のため ID を入力してください。`,
-  );
-  if (typed === null) return;
-  if (typed.trim().toUpperCase() !== p.id) return alert("ID が一致しないため削除しませんでした。");
+  if (!confirm(`${p.id} の録音・AI音声・利用ログをすべて削除します。元に戻せません。\n削除しますか？`)) return;
   await api(`/api/admin/participants/${p.id}`, { method: "DELETE" });
   $("recordings-card").classList.add("hidden");
   loadParticipants();
