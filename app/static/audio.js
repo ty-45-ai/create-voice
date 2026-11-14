@@ -108,8 +108,13 @@ export async function resample(samples, fromRate, toRate = TARGET_RATE) {
   return rendered.getChannelData(0).slice();
 }
 
-// Drop leading/trailing silence so a slow start does not count as voice.
+// Drop leading/trailing silence so a slow start does not count as voice. The threshold
+// follows the loudest sample, so a quiet microphone is trimmed, not emptied.
 export function trimSilence(samples, sampleRate, threshold = 0.02) {
+  let peak = 0;
+  for (let i = 0; i < samples.length; i++) peak = Math.max(peak, Math.abs(samples[i]));
+  threshold = Math.min(threshold, peak * 0.1);
+  if (peak < 0.002) return new Float32Array(0); // nothing but silence
   const pad = Math.round(sampleRate * 0.2);
   let start = 0;
   let end = samples.length - 1;
@@ -169,9 +174,10 @@ export function encodeWav(samples, sampleRate) {
 
 // Turn any capture or file into the WAV the server expects, and report on its quality.
 export async function prepareVoice({ samples, sampleRate }, maxSeconds = 60) {
+  const recordedSeconds = samples.length / sampleRate;
   let s = trimSilence(samples, sampleRate);
   s = await resample(s, sampleRate, TARGET_RATE);
   if (s.length > maxSeconds * TARGET_RATE) s = s.slice(0, maxSeconds * TARGET_RATE);
   const info = analyze(s, TARGET_RATE);
-  return { blob: encodeWav(s, TARGET_RATE), ...info };
+  return { blob: encodeWav(s, TARGET_RATE), recordedSeconds, ...info };
 }

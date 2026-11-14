@@ -147,7 +147,13 @@ function recordCard(item, index, supported) {
     const check = review.querySelector(".check");
     const save = review.querySelector(".save");
     save.disabled = false;
-    if (voice.duration < 0.5) {
+    if (voice.duration < 0.5 && voice.recordedSeconds >= 1) {
+      // Recorded for a while but nothing came in: the wrong or a muted microphone.
+      check.textContent = "マイクから音が入っていませんでした。マイクがミュートになっていないか、"
+        + "ブラウザで使うマイクが正しいか（アドレスバーのマイクのマーク）を確かめて、もう一度録音してください。";
+      check.className = "check notice bad";
+      save.disabled = true;
+    } else if (voice.duration < 0.5) {
       check.textContent = "声が聞き取れませんでした。もう一度録音してください。";
       check.className = "check notice bad";
       save.disabled = true;
