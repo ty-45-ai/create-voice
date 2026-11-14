@@ -208,3 +208,11 @@ tr.inactive td { opacity: 0.55; }
 .chip.generating { background: var(--soft-blue); border-color: #9bbcf5; color: #1c4fae; }
 .chip.ready { background: #e3f4ea; border-color: #8fd0aa; color: var(--good); }
 .chip.failed { background: #fdecea; border-color: #f0a39b; color: var(--bad); }
+
+/* AI audio counts use the same colours as the students' states */
+.stats .stat { border-left: 4px solid var(--line); padding-left: 10px; }
+.stats .stat.ready { border-left-color: #8fd0aa; }
+.stats .stat.generating { border-left-color: #9bbcf5; }
+.stats .stat.failed { border-left-color: #f0a39b; }
+.stats .stat small { font-size: 0.5em; font-weight: 400; color: var(--muted); }
+h3.sub { margin: 12px 0 0; font-size: 0.95em; color: var(--muted); }

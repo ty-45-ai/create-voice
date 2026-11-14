@@ -32,9 +32,9 @@
       <div class="card">
         <h1>教材の音読を録音しましょう</h1>
         <ol class="steps">
-          <li>静かな場所で、それぞれの文の「● 録音」を押して読み上げ、「■ 停止」を押します。</li>
-          <li>聞き直して、よければ「保存する」を押します。うまくいかなければ録り直せます。</li>
-          <li>すべての文を保存したら、いちばん下の「提出する」を押してください。</li>
+          <li>静かな場所で、それぞれの文の「● 録音」を押して読み上げ、読み終えたら「■ 停止」を押します。</li>
+          <li>録音を聞き直し、問題がなければ「保存する」を押します。うまくいかない場合は録り直してください。</li>
+          <li>すべての文を保存したら、画面下の「提出する」を押してください。</li>
         </ol>
         <p id="mic-warning" class="notice warn hidden"></p>
         <p id="record-progress" class="notice"></p>
@@ -51,12 +51,12 @@
     <section id="view-listen" class="hidden">
       <div class="card">
         <h1>音声を聞きましょう</h1>
-        <p id="listen-guide">練習ごとに、<b>① 自分の声 → ② AI音声（クローン） → ③ AI音声（標準）</b> の順に聞きましょう。②と③は、①を最後まで聞くと聞けるようになります。</p>
+        <p id="listen-guide">練習ごとに、<b>① 自分の声 → ② AI音声（クローン） → ③ AI音声（標準）</b> の順に聞いてください。②と③は、①を最後まで聞くと再生できるようになります。</p>
         <p id="listen-progress" class="notice hidden"></p>
       </div>
       <div id="listen-items"></div>
       <div id="survey" class="card center hidden">
-        <p>すべて聞き終わったら、アンケートに答えてください。</p>
+        <p>すべて聞き終えたら、アンケートに回答してください。</p>
         <a id="survey-link" class="button-link big primary" target="_blank" rel="noopener">アンケートに回答する</a>
       </div>
     </section>
@@ -101,22 +101,22 @@
       <ol class="voice-list"></ol>
       <div class="player-settings">
         <div class="setting">
-          <span class="setting-label">速さ <b class="rate-value">1.0 倍</b></span>
+          <span class="setting-label">再生速度 <b class="rate-value">1.0 倍</b></span>
           <div class="slider-row">
             <span class="small">ゆっくり</span>
-            <input class="rate" type="range" min="0" max="100" step="5" value="50" aria-label="速さ">
+            <input class="rate" type="range" min="0" max="100" step="5" value="50" aria-label="再生速度">
             <span class="small">速い</span>
             <button class="rate-reset small-btn" type="button">元に戻す</button>
           </div>
         </div>
         <div class="setting">
-          <span class="setting-label">くり返し</span>
-          <div class="repeat" role="group" aria-label="くり返し">
+          <span class="setting-label">繰り返し</span>
+          <div class="repeat" role="group" aria-label="繰り返し">
             <button type="button" data-repeat="1" class="on">1回</button>
             <button type="button" data-repeat="3">3回</button>
             <button type="button" data-repeat="5">5回</button>
             <button type="button" data-repeat="10">10回</button>
-            <button type="button" data-repeat="0">ずっと</button>
+            <button type="button" data-repeat="0">連続</button>
           </div>
         </div>
       </div>

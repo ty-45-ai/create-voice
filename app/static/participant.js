@@ -20,7 +20,7 @@ async function api(path, opts = {}) {
     throw new Error("login");
   }
   if (!res.ok) {
-    let msg = "うまくいきませんでした。もう一度試してください。";
+    let msg = "エラーが発生しました。もう一度お試しください。";
     try {
       const d = (await res.json()).detail;
       if (typeof d === "string") msg = d;
@@ -156,10 +156,10 @@ function recordCard(item, index, supported) {
       check.className = "check notice bad";
       save.disabled = true;
     } else if (voice.peak < 0.05 || voice.voiced < 0.2) {
-      check.textContent = "声が小さいようです。マイクに近づいて、はっきり読むとよくなります。";
+      check.textContent = "声が小さいようです。マイクに近づいて、はっきり読んでください。";
       check.className = "check notice warn";
     } else {
-      check.textContent = "よく録音できました。";
+      check.textContent = "きれいに録音できました。";
       check.className = "check notice good";
     }
     review.classList.remove("hidden");
@@ -358,7 +358,7 @@ function renderListen() {
   const waiting = me.items.some((i) => (i.audios || []).some((a) => a.kind !== "own" && !a.url));
   const progress = $("listen-progress");
   progress.classList.toggle("hidden", !waiting);
-  progress.textContent = "AI音声を準備しています。少し待つと聞けるようになります（画面は自動で更新されます）。";
+  progress.textContent = "AI音声を生成しています。完成次第、再生できるようになります（画面は自動で更新されます）。";
   $("survey").classList.toggle("hidden", !me.survey_url);
   $("survey-link").href = me.survey_url || "#";
   if (waiting) pollTimer = setTimeout(refresh, 10000);
@@ -387,12 +387,12 @@ function listenCard(item, index) {
       const { audio, btn, state, li } = row;
       let text;
       let ready = !!audio.url;
-      if (!audio.url) text = audio.kind === "own" ? "録音がありません" : "準備中です…";
+      if (!audio.url) text = audio.kind === "own" ? "録音がありません" : "生成中です…";
       else if (audio.kind !== "own" && locked()) {
-        text = "① を最後まで聞くと聞けます";
+        text = "① を最後まで聞くと再生できます";
         ready = false;
-      } else if (row.heard) text = "聞きました ✓";
-      else text = "聞けます";
+      } else if (row.heard) text = "再生済み ✓";
+      else text = "再生できます";
       state.textContent = text;
       btn.disabled = !ready;
       li.classList.toggle("ready", ready);
@@ -409,7 +409,7 @@ function listenCard(item, index) {
     const state = Object.assign(document.createElement("span"), { className: "voice-state small" });
     info.append(name, state);
     const btn = Object.assign(document.createElement("button"), { type: "button", className: "voice-play primary" });
-    btn.textContent = "▶ 聞く";
+    btn.textContent = "▶ 再生";
     li.append(step, info, btn);
     q(".voice-list").appendChild(li);
     const row = { audio, btn, state, li, heard: audio.kind === "own" && heardOwn.has(sid) };
@@ -425,7 +425,7 @@ function listenCard(item, index) {
           refreshRows();
         }
         li.classList.toggle("playing", st !== "done");
-        btn.textContent = st === "done" ? "▶ 聞く" : "■ 止める";
+        btn.textContent = st === "done" ? "▶ 再生" : "■ 停止";
         if (st === "done") refreshRows();
         else state.textContent = `再生中（${roundLabel(round, settings)}）`;
       });

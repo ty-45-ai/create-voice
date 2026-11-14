@@ -35,19 +35,18 @@
       <!-- 進捗 -->
       <div id="tab-progress" class="tab">
         <div class="card">
-          <h2>生徒の進み具合</h2>
-          <p class="small">生徒は録音してすべて提出すると、AI音声ができしだい ① 自分の声 → ② AI音声（クローン） → ③ AI音声（標準）を聞けます。10秒ごとに自動で更新されます。</p>
-          <div class="legend">
-            <span class="chip not_started">未録音</span>
-            <span class="chip recording">録音中</span>
-            <span class="chip generating">AI音声を作成中</span>
-            <span class="chip ready">聞ける</span>
-            <span class="chip failed">AI音声の失敗</span>
-          </div>
+          <h2>進捗状況</h2>
+          <p class="small">生徒は全文を録音して提出すると、AI音声の完成後に ① 自分の声 → ② AI音声（クローン） → ③ AI音声（標準）を聴取できます。表示は10秒ごとに自動で更新されます。</p>
+          <h3 class="sub">全体（人数）</h3>
+          <div id="progress-total" class="class-counts"></div>
           <div id="progress-classes"></div>
         </div>
         <div id="standard-alert" class="card hidden"></div>
-        <div class="card stats" id="stats"></div>
+        <div class="card">
+          <h2>AI音声の生成状況</h2>
+          <p class="small">AI音声（クローン・標準）の件数です。生徒1人につき、教材の数だけAI音声（クローン）を生成します。</p>
+          <div class="stats" id="stats"></div>
+        </div>
       </div>
 
       <!-- 参加者 -->
@@ -62,13 +61,13 @@
           </form>
           <details style="margin-top:12px">
             <summary>CSVで一括登録する</summary>
-            <p class="small">1行に「ID,クラス,パスワード」。パスワードを省略すると自動で作ります（英数字4〜32文字。大文字・小文字は区別しません）。例：<code>S001,3-1</code>、<code>S002,3-1,sakura25</code></p>
+            <p class="small">1行に「ID,クラス,パスワード」の形式で入力します。パスワードを省略した場合は自動で生成します（英数字4〜32文字、大文字・小文字の区別なし）。例：<code>S001,3-1</code>、<code>S002,3-1,sakura25</code></p>
             <textarea id="import-csv" rows="6" placeholder="S001,3-1&#10;S002,3-1,sakura25"></textarea>
             <button id="import-button" class="primary" type="button">登録する</button>
           </details>
           <div id="created" class="hidden">
-            <p class="notice">発行しました。パスワードは下の「参加者一覧」でいつでも確認・変更・CSV保存できます。氏名との対応表はアプリの外で管理してください。</p>
-            <button id="created-csv" type="button">今回発行した分をCSVで保存</button>
+            <p class="notice">発行が完了しました。パスワードは「参加者一覧」でいつでも確認・変更・CSV保存ができます。氏名との対応表は、アプリの外で管理してください。</p>
+            <button id="created-csv" type="button">今回発行した参加者をCSVで保存</button>
             <div class="table-wrap"><table id="created-table"></table></div>
           </div>
         </div>
@@ -80,7 +79,7 @@
           </div>
           <div id="missing-passwords" class="notice warn hidden">
             <span id="missing-passwords-text"></span>
-            <button id="fill-passwords" type="button">まとめて新しいパスワードを発行する</button>
+            <button id="fill-passwords" type="button">一括で新しいパスワードを発行</button>
           </div>
           <div class="table-wrap"><table id="participants-table"></table></div>
         </div>
@@ -96,7 +95,7 @@
           <h2 id="sentence-form-title">教材を追加</h2>
           <form id="sentence-form">
             <label>練習する文章
-              <span class="small">（改行してもひとつの練習になります。<b>空行で区切ると、別々の練習</b>として追加されます）</span>
+              <span class="small">（改行を含む文章は1つの練習として登録されます。<b>空行で区切ると、別々の練習</b>として登録されます）</span>
               <textarea id="sentence-text" rows="6" required></textarea></label>
             <div class="inline-form">
               <label>言語
@@ -107,13 +106,13 @@
                 </select>
               </label>
               <button id="sentence-submit" class="primary" type="submit">追加</button>
-              <button id="sentence-cancel" class="hidden" type="button">編集をやめる</button>
+              <button id="sentence-cancel" class="hidden" type="button">編集を取り消す</button>
             </div>
           </form>
         </div>
         <div class="card">
           <h2>教材一覧</h2>
-          <p class="small">AI音声（標準）は教材を追加すると自動で作られます（全員共通）。AI音声（クローン）は生徒が提出すると、その生徒の声で作られます。文を変更すると、その文のAI音声はつくり直されます。</p>
+          <p class="small">AI音声（標準）は教材の登録時に自動で生成されます（全員共通）。AI音声（クローン）は生徒の提出後に、その生徒の声で生成されます。文章を変更すると、その教材のAI音声は再生成されます。</p>
           <div class="table-wrap"><table id="sentences-table"></table></div>
         </div>
       </div>
@@ -129,12 +128,12 @@
                 <option value="done">完了</option>
                 <option value="queued">待機中</option>
                 <option value="processing">生成中</option>
-                <option value="failed">失敗</option>
+                <option value="failed">エラー</option>
               </select>
             </label>
             <button id="clip-reload" type="button">更新</button>
-            <button id="clip-retry-failed" type="button">失敗をすべて再生成</button>
-            <button id="clip-regenerate-all" type="button">全部つくり直す</button>
+            <button id="clip-retry-failed" type="button">エラーをすべて再生成</button>
+            <button id="clip-regenerate-all" type="button">すべて再生成</button>
           </div>
           <div class="table-wrap"><table id="clips-table"></table></div>
         </div>
@@ -144,7 +143,7 @@
       <div id="tab-settings" class="tab hidden">
         <div class="card">
           <h2>AI音声（標準）の声</h2>
-          <p class="small">生徒は全員、練習ごとに <b>① 自分の声 → ② AI音声（クローン） → ③ AI音声（標準）</b> の順に聞きます。②と③は、①を最後まで聞くと押せるようになります。</p>
+          <p class="small">生徒は練習ごとに <b>① 自分の声 → ② AI音声（クローン） → ③ AI音声（標準）</b> の順に聴取します。②と③は、①を最後まで再生すると再生できるようになります。</p>
           <div class="inline-form">
             <label>英語の教材
               <input id="standard-voice-en" list="standard-voice-list">
@@ -154,13 +153,13 @@
             </label>
             <datalist id="standard-voice-list"></datalist>
           </div>
-          <p class="small">空欄なら、その言語を話せる声を自動で選びます（灰色の文字が今使われる声）。Voicebox の声は <code>kokoro:af_heart</code> のように「エンジン:声」で指定します（入力欄をクリックすると候補が出ます）。変更すると、その言語の教材のAI音声（標準）はつくり直されます。</p>
+          <p class="small">空欄の場合は、教材の言語に対応した声を自動で選択します（灰色の文字が現在使用される声です）。Voicebox の声は <code>kokoro:af_heart</code> のように「エンジン:声」の形式で指定します（入力欄をクリックすると候補が表示されます）。変更すると、該当する言語の教材のAI音声（標準）が再生成されます。</p>
         </div>
         <div class="card">
           <h2>聴取画面の設定</h2>
-          <label class="check-row"><input id="allow-controls" type="checkbox"> 生徒が速さ（0.5〜2.0倍）とくり返しを変えられるようにする</label>
-          <label class="check-row"><input id="require-approval" type="checkbox"> AI音声は研究者が承認してから生徒に公開する</label>
-          <label>練習後アンケートのURL（空欄なら表示しない。<code>{id}</code> は参加者IDに置き換わります）
+          <label class="check-row"><input id="allow-controls" type="checkbox"> 生徒が再生速度（0.5〜2.0倍）と繰り返し回数を変更できるようにする</label>
+          <label class="check-row"><input id="require-approval" type="checkbox"> AI音声を研究者の承認後に公開する</label>
+          <label>練習後アンケートのURL（空欄の場合は表示しません。<code>{id}</code> は参加者IDに置き換えられます）
             <input id="survey-url" placeholder="https://forms.gle/...?entry.123={id}">
           </label>
           <button id="save-settings" class="primary" type="button">保存</button>
@@ -173,7 +172,7 @@
             <a href="/api/admin/participants.csv"><button type="button">参加者一覧（CSV）</button></a>
             <a href="/api/admin/recordings.zip"><button type="button">生徒の録音（ZIP）</button></a>
           </div>
-          <p class="small">利用ログ：ログイン・録音・提出・再生（速さ・くり返し）・アンケートを開いた記録。録音ZIPは個人の声を含むため、研究者の管理下でのみ扱ってください。</p>
+          <p class="small">利用ログには、ログイン・録音・提出・再生（速度・繰り返し回数）・アンケートの表示が記録されます。録音ZIPには生徒の声が含まれるため、研究者の管理下でのみ取り扱ってください。</p>
         </div>
       </div>
     </section>

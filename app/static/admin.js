@@ -15,7 +15,7 @@ function h(tag, attrs = {}, ...children) {
   return el;
 }
 
-const STATUS_LABEL = { done: "完了", queued: "待機中", processing: "生成中", failed: "失敗" };
+const STATUS_LABEL = { done: "完了", queued: "待機中", processing: "生成中", failed: "エラー" };
 const LANG_LABEL = { ja: "日本語", en: "英語" };
 
 async function api(path, opts = {}) {
@@ -110,11 +110,10 @@ let status = null;
 async function loadStatus() {
   status = await api("/api/admin/status");
   const q = status.queue;
+  // Same order and colours as the students' states: done = ready, processing = generating.
   $("stats").replaceChildren(
-    h("div", { class: "stat" }, "AI音声 完了", h("b", {}, q.done)),
-    h("div", { class: "stat" }, "待機中", h("b", {}, q.queued)),
-    h("div", { class: "stat" }, "生成中", h("b", {}, q.processing)),
-    h("div", { class: "stat" }, "失敗", h("b", {}, q.failed)),
+    ...[["done", "ready"], ["processing", "generating"], ["queued", "not_started"], ["failed", "failed"]].map(
+      ([key, tone]) => h("div", { class: `stat ${tone}` }, STATUS_LABEL[key], h("b", {}, `${q[key]}`, h("small", {}, " 件")))),
   );
   let state = `エンジン: ${status.engine}`;
   if (status.engine_loading) state += "（モデル読み込み中…）";
@@ -124,37 +123,42 @@ async function loadStatus() {
   const failures = status.standard_failures || [];
   $("standard-alert").classList.toggle("hidden", !failures.length);
   $("standard-alert").replaceChildren(
-    h("h2", {}, "AI音声（標準）を作れなかった教材があります"),
-    h("p", { class: "small" }, "生徒の画面では「準備中」のままになります。原因を直してから「もう一度作る」を押してください。"
-      + "声が教材の言語を話せない場合は「設定・出力」で声を変えてください。"),
+    h("h2", {}, "AI音声（標準）を生成できなかった教材があります"),
+    h("p", { class: "small" }, "生徒の画面では「生成中」と表示されたままになります。原因を解消してから「再生成」を押してください。"
+      + "声が教材の言語に対応していない場合は、「設定・出力」で声を変更してください。"),
     ...failures.map((f) => h("div", { class: "fail-row" },
       h("div", { class: "pre" }, f.text),
       h("div", { class: "err-text" }, f.error),
       h("button", { onclick: async () => {
         await api(`/api/admin/sentences/${f.sentence_id}/standard/regenerate`, { method: "POST" });
         loadProgress();
-      } }, "もう一度作る"))),
+      } }, "再生成"))),
   );
 }
 
 // ---- progress ----
 
 const STATE_LABEL = {
-  not_started: "未録音", recording: "録音中", generating: "AI音声を作成中", ready: "聞ける", failed: "AI音声の失敗",
+  not_started: "未録音", recording: "録音中", generating: "音声生成中", ready: "聴取可能", failed: "生成エラー",
 };
+
+function stateChips(counts) {
+  return Object.entries(STATE_LABEL).map(([k, label]) => h("span", { class: `chip ${k}` }, `${label} ${counts[k] || 0}人`));
+}
 
 async function loadProgress() {
   await loadStatus();
   const classes = await api("/api/admin/progress");
   const total = status.sentence_count;
+  const sum = {};
+  classes.forEach((c) => Object.entries(c.counts).forEach(([k, n]) => (sum[k] = (sum[k] || 0) + n)));
+  $("progress-total").replaceChildren(...stateChips(sum));
   const box = $("progress-classes");
   box.replaceChildren(
     ...classes.map((c) =>
       h("section", { class: "class-progress" },
         h("h3", {}, `${c.class_name || "クラス未設定"}（${c.total}人）`),
-        h("div", { class: "class-counts" },
-          Object.entries(STATE_LABEL).filter(([k]) => c.counts[k]).map(([k, label]) =>
-            h("span", { class: `chip ${k}` }, `${label} ${c.counts[k]}人`))),
+        h("div", { class: "class-counts" }, stateChips(c.counts)),
         h("div", { class: "students" },
           c.students.map((st) =>
             h("span", {
@@ -223,8 +227,8 @@ $("passwords-csv").addEventListener("click", () => {
 });
 
 $("fill-passwords").addEventListener("click", async () => {
-  if (!confirm("パスワードが「不明」の生徒全員に、新しいパスワードを発行します。\n"
-    + "その生徒たちは、今までのパスワードではログインできなくなります。よろしいですか？")) return;
+  if (!confirm("パスワードが「不明」の参加者全員に、新しいパスワードを発行します。\n"
+    + "対象の参加者は、これまでのパスワードではログインできなくなります。実行しますか？")) return;
   showCreated(await api("/api/admin/participants/fill-missing-passwords", { method: "POST" }));
 });
 
@@ -239,7 +243,7 @@ async function loadParticipants() {
   const missing = rows.filter((p) => !p.passcode).length;
   $("missing-passwords").classList.toggle("hidden", !missing);
   $("missing-passwords-text").textContent =
-    `パスワードが「不明」の生徒が ${missing} 人います（この機能を入れる前に発行した生徒）。 `;
+    `パスワードが「不明」の参加者が ${missing} 人います（パスワード管理機能の追加前に発行した参加者）。 `;
   const total = status.sentence_count;
   const sel = $("clip-participant");
   const keep = sel.value;
@@ -256,10 +260,10 @@ async function loadParticipants() {
         h("td", { class: "mono" }, passwordCell(p)),
         h("td", {}, p.class_name || "—"),
         h("td", { class: "num" }, `${p.recorded} / ${total}`,
-          p.recorded ? [" ", h("button", { onclick: () => showRecordings(p) }, "聞く")] : ""),
+          p.recorded ? [" ", h("button", { onclick: () => showRecordings(p) }, "試聴")] : ""),
         h("td", { class: "small" }, p.submitted_at || "未提出"),
         h("td", { class: "num" }, `${p.clip_done} / ${p.submitted_at ? total : 0}`,
-          p.clip_failed ? h("span", { class: "badge failed" }, ` 失敗 ${p.clip_failed}`) : ""),
+          p.clip_failed ? h("span", { class: "badge failed" }, ` エラー ${p.clip_failed}`) : ""),
         h("td", { class: "small" }, p.last_activity || "—"),
         h("td", {},
           h("div", { class: "actions" },
@@ -301,7 +305,7 @@ async function editParticipant(p) {
 }
 
 async function reopen(p) {
-  if (!confirm(`${p.id} の提出を取り消して、録り直せるようにしますか？（再提出するとAI音声はつくり直されます）`)) return;
+  if (!confirm(`${p.id} の提出を取り消し、録り直しができる状態に戻しますか？（再提出すると、AI音声は再生成されます）`)) return;
   await api(`/api/admin/participants/${p.id}/reopen`, { method: "POST" });
   loadParticipants();
 }
@@ -313,7 +317,7 @@ async function toggleActive(p) {
 
 async function resetPass(p) {
   const typed = prompt(
-    `${p.id} の新しいパスワード（英数字4〜32文字。空欄のままOKを押すと自動で作ります）\n古いパスワードは使えなくなります。`, "");
+    `${p.id} の新しいパスワード（英数字4〜32文字。空欄のままOKを押すと自動で生成します）\n変更前のパスワードは使用できなくなります。`, "");
   if (typed === null) return;
   const r = await api(`/api/admin/participants/${p.id}/passcode`, { json: { password: typed.trim() } });
   alert(`${r.id} の新しいパスワード：${r.passcode}`);
@@ -354,7 +358,7 @@ $("sentence-form").addEventListener("submit", async (e) => {
   const items = splitItems($("sentence-text").value);
   if (!items.length) return;
   if (editingSentence) {
-    if (items.length > 1) return alert("編集中は空行を入れられません（ひとつの練習として保存します）。");
+    if (items.length > 1) return alert("編集中は空行を入力できません（1つの練習として保存されます）。");
     if (items[0] !== editingSentence.text) {
       await api(`/api/admin/sentences/${editingSentence.id}`, {
         method: "PATCH", json: { text: items[0], lang: $("sentence-lang").value },
@@ -419,7 +423,7 @@ function editSentence(s) {
   editingSentence = s;
   $("sentence-text").value = s.text;
   $("sentence-lang").value = s.lang;
-  $("sentence-form-title").textContent = `教材を編集（${s.sort_order}番）— 変更するとこの練習のAI音声はつくり直されます`;
+  $("sentence-form-title").textContent = `教材を編集（${s.sort_order}番）— 変更すると、この練習のAI音声は再生成されます`;
   $("sentence-submit").textContent = "更新";
   $("sentence-cancel").classList.remove("hidden");
   $("sentence-form").scrollIntoView({ behavior: "smooth" });
@@ -445,13 +449,13 @@ $("clip-participant").addEventListener("change", loadClips);
 $("clip-status").addEventListener("change", loadClips);
 $("clip-retry-failed").addEventListener("click", async () => {
   const r = await api("/api/admin/clips/regenerate-failed", { method: "POST" });
-  alert(`${r.count} 件を再生成の順番待ちに入れました。`);
+  alert(`${r.count} 件を再生成の待機列に追加しました。`);
   loadClips();
 });
 $("clip-regenerate-all").addEventListener("click", async () => {
-  if (!confirm("すべてのAI音声をつくり直します（音声エンジンを切り替えたときなど）。よろしいですか？")) return;
+  if (!confirm("すべてのAI音声を再生成します（音声エンジンを切り替えた場合など）。実行しますか？")) return;
   const r = await api("/api/admin/clips/regenerate-all", { method: "POST" });
-  alert(`${r.count} 件をつくり直しの順番待ちに入れました。`);
+  alert(`${r.count} 件を再生成の待機列に追加しました。`);
   loadClips();
 });
 
@@ -489,7 +493,7 @@ async function loadClips() {
       ),
     ),
   );
-  if (!rows.length) emptyRow(table, 8, "該当するAI音声はありません（生徒が提出すると生成されます）。");
+  if (!rows.length) emptyRow(table, 8, "該当するAI音声はありません（生徒の提出後に生成されます）。");
 }
 
 async function approve(c, approved) {

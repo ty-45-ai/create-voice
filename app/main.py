@@ -265,7 +265,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         pid = body.id.strip().upper()
         key = client_key(request, pid)
         if throttle.blocked(key):
-            raise HTTPException(429, "ログインの失敗が続いたため、5分ほど待ってからやり直してください")
+            raise HTTPException(429, "ログインの失敗が続いたため、5分ほど待ってから再度お試しください")
         p = store.get_participant(pid) if PARTICIPANT_ID_RE.match(pid) else None
         if p is None or not p["active"] or not auth.verify_secret(body.passcode.strip().lower(), p["passcode_hash"]):
             throttle.fail(key)
@@ -363,13 +363,13 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
     @app.get("/api/model/{sid}/{kind}")
     def model_voice(sid: int, kind: str, p=Depends(participant)):
         if store.phase_of(p) != "listen":
-            raise HTTPException(409, "提出すると聞けるようになります")
+            raise HTTPException(409, "提出後に再生できます")
         if kind not in AUDIO_KINDS or kind == "own":
             raise HTTPException(404, "音声がありません")
         item = next((i for i in items_with_paths(p) if i["sentence_id"] == sid), None)
         path = audio_path(store, item, kind) if item else None
         if path is None:
-            raise HTTPException(404, "音声はまだ準備中です")
+            raise HTTPException(404, "音声はまだ生成中です")
         return audio_response(path)
 
     @app.post("/api/events")
@@ -383,7 +383,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
     def admin_login(body: AdminLoginBody, request: Request, response: Response):
         key = client_key(request, "admin")
         if throttle.blocked(key):
-            raise HTTPException(429, "ログイン失敗が続いたため、5分ほど待ってください")
+            raise HTTPException(429, "ログインの失敗が続いたため、5分ほど待ってから再度お試しください")
         stored = admin_hash or store.get_setting("admin_password_hash") or ""
         if not auth.verify_secret(body.password, stored):
             throttle.fail(key)
