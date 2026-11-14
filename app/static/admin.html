@@ -173,6 +173,18 @@
       </div>
     </section>
   </main>
+  <script>
+    // If the page script fails (e.g. an old copy cached by the browser), say so instead of a blank page.
+    window.addEventListener("error", function () {
+      if (document.getElementById("load-error")) return;
+      var p = document.createElement("p");
+      p.id = "load-error";
+      p.className = "notice warn";
+      p.style.margin = "16px";
+      p.textContent = "画面を読み込めませんでした。Ctrl + F5（Mac は command + shift + R）で読み込み直してください。";
+      document.body.prepend(p);
+    });
+  </script>
   <script type="module" src="/static/admin.js"></script>
 </body>
 </html>

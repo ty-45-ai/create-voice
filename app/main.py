@@ -208,6 +208,9 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Permissions-Policy", "microphone=(self)")
+        if request.url.path.startswith("/static/"):
+            # Check for a newer file on every load, so an update never mixes old and new scripts.
+            response.headers["Cache-Control"] = "no-cache"
         return response
 
     def set_cookie(response: Response, role: str, token: str, ttl: int) -> None:
