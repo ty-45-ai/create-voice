@@ -17,7 +17,6 @@ function h(tag, attrs = {}, ...children) {
 
 const STATUS_LABEL = { done: "完了", queued: "待機中", processing: "生成中", failed: "失敗" };
 const LANG_LABEL = { ja: "日本語", en: "英語" };
-const PHASE_LABEL = { record: "録音", listen: "聴取", closed: "停止" };
 
 async function api(path, opts = {}) {
   const init = { credentials: "same-origin", ...opts };
@@ -138,45 +137,38 @@ async function loadStatus() {
   );
 }
 
-// ---- progress & phase ----
+// ---- progress ----
 
-function phaseSelect(value, onchange) {
-  const sel = h("select", { onchange: (e) => onchange(e.target.value) },
-    Object.entries(PHASE_LABEL).map(([v, label]) => h("option", { value: v }, label)));
-  sel.value = value;
-  return sel;
-}
+const STATE_LABEL = {
+  not_started: "未録音", recording: "録音中", generating: "AI音声を作成中", ready: "聞ける", failed: "AI音声の失敗",
+};
 
 async function loadProgress() {
   await loadStatus();
-  $("default-phase").value = status.default_phase;
-  const rows = await api("/api/admin/progress");
-  const table = $("progress-table");
-  table.replaceChildren(
-    h("tr", {}, ["クラス", "段階", "人数", "提出済み", "AI音声 準備完了", "未提出の生徒", "AI音声 生成待ち"].map((t) => h("th", {}, t))),
-    ...rows.map((c) =>
-      h("tr", {},
-        h("td", {}, c.class_name || "（未設定）"),
-        h("td", {}, phaseSelect(c.phase, async (phase) => {
-          await api("/api/admin/phase", { method: "PUT", json: { class_name: c.class_name, phase } });
-          loadProgress();
-        })),
-        h("td", { class: "num" }, `${c.total}`),
-        h("td", { class: "num" }, `${c.submitted} / ${c.total}`),
-        h("td", { class: "num" }, `${c.ai_ready} / ${c.total}`,
-          c.total && c.ai_ready === c.total ? h("span", { class: "badge done" }, " 全員分そろっています") : ""),
-        h("td", { class: "mono small" }, c.not_submitted.join(", ") || "—"),
-        h("td", { class: "mono small" }, c.ai_waiting.join(", ") || "—"),
-      ),
-    ),
+  const classes = await api("/api/admin/progress");
+  const total = status.sentence_count;
+  const box = $("progress-classes");
+  box.replaceChildren(
+    ...classes.map((c) =>
+      h("section", { class: "class-progress" },
+        h("h3", {}, `${c.class_name || "クラス未設定"}（${c.total}人）`),
+        h("div", { class: "class-counts" },
+          Object.entries(STATE_LABEL).filter(([k]) => c.counts[k]).map(([k, label]) =>
+            h("span", { class: `chip ${k}` }, `${label} ${c.counts[k]}人`))),
+        h("div", { class: "students" },
+          c.students.map((st) =>
+            h("span", {
+              class: `chip student ${st.state}`,
+              title: `${st.id}：${STATE_LABEL[st.state]}（録音 ${st.recorded} / ${total}`
+                + (st.state === "generating" || st.state === "failed" ? `、AI音声 ${st.clip_done} / ${total}` : "") + "）",
+            },
+            st.id,
+            st.state === "recording" ? h("small", {}, ` ${st.recorded}/${total}`) : "",
+            st.state === "generating" ? h("small", {}, ` ${st.clip_done}/${total}`) : ""))),
+      )),
   );
-  if (!rows.length) emptyRow(table, 7, "まだ参加者がいません。「参加者」タブで発行してください。");
+  if (!classes.length) box.replaceChildren(h("p", { class: "small" }, "まだ参加者がいません。「参加者」タブで発行してください。"));
 }
-
-$("default-phase").addEventListener("change", async (e) => {
-  await api("/api/admin/phase", { method: "PUT", json: { class_name: null, phase: e.target.value } });
-  loadProgress();
-});
 
 // ---- participants ----
 
@@ -487,7 +479,6 @@ async function loadSettings() {
   await loadStatus();
   $("allow-controls").checked = status.allow_controls;
   $("require-approval").checked = status.require_approval;
-  $("listen-after-submit").checked = status.listen_after_submit;
   $("survey-url").value = status.survey_url;
   for (const lang of ["en", "ja"]) {
     $(`standard-voice-${lang}`).value = status.standard_voice[lang] || "";
@@ -503,7 +494,6 @@ $("save-settings").addEventListener("click", async () => {
     json: {
       allow_controls: $("allow-controls").checked,
       require_approval: $("require-approval").checked,
-      listen_after_submit: $("listen-after-submit").checked,
       survey_url: $("survey-url").value,
       standard_voices: { en: $("standard-voice-en").value.trim(), ja: $("standard-voice-ja").value.trim() },
     },

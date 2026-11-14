@@ -23,7 +23,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-PHASES = ("record", "listen", "closed")
 # What every student hears at the listening stage, in this order: their own recording,
 # the AI voice cloned from it, the engine's stock voice (same for everyone).
 AUDIO_KINDS = ("own", "ai_self", "standard")
@@ -112,8 +111,6 @@ DEFAULT_SETTINGS = {
     "require_approval": "0",
     "allow_controls": "1",
     "survey_url": "",
-    "phase": "record",
-    "listen_after_submit": "1",
     # Stock voice per language; empty = the engine picks one that speaks the language.
     "standard_voice:en": "",
     "standard_voice:ja": "",
@@ -164,6 +161,8 @@ class Store:
         conn.execute("UPDATE participants SET condition='ai' WHERE condition != 'ai'")
         conn.execute("UPDATE sentences SET native_path=NULL WHERE native_path IS NOT NULL")
         conn.execute("DELETE FROM settings WHERE key LIKE 'listen_set:%'")
+        # ...and per-class stages (record / listen / closed); students now listen once they submit.
+        conn.execute("DELETE FROM settings WHERE key IN ('phase', 'listen_after_submit') OR key LIKE 'phase:%'")
         old = conn.execute("SELECT value FROM settings WHERE key='standard_voice'").fetchone()
         if old is not None:
             if ":" in old["value"]:  # a Voicebox voice ("engine:voice") chosen for English texts
@@ -226,22 +225,10 @@ class Store:
     def standard_voice(self, lang: str) -> str:
         return self.get_setting(f"standard_voice:{lang}") or ""
 
-    def effective_phase(self, participant) -> str:
-        """The class's stage, except that a submitted student may listen straight away
-        when 'listen_after_submit' is on."""
-        phase = self.phase_for(participant["class_name"])
-        if phase == "record" and participant["submitted_at"] and self.flag("listen_after_submit"):
-            return "listen"
-        return phase
-
-    def phase_for(self, class_name: str) -> str:
-        """Each class can be in its own stage; classes without one follow the default."""
-        return self.get_setting(f"phase:{class_name}") or self.get_setting("phase") or "record"
-
-    def set_phase(self, class_name: str | None, phase: str) -> None:
-        if phase not in PHASES:
-            raise ValueError(phase)
-        self.set_setting("phase" if class_name is None else f"phase:{class_name}", phase)
+    @staticmethod
+    def phase_of(participant) -> str:
+        """A student records until they submit, then listens."""
+        return "listen" if participant["submitted_at"] else "record"
 
     # ---- sessions -----------------------------------------------------------
 
@@ -326,25 +313,31 @@ class Store:
                 "SELECT DISTINCT class_name FROM participants ORDER BY class_name")]
 
     def progress(self) -> list[dict]:
-        """Per class: how many submitted, and whether the AI voices for them are ready."""
+        """Per class, every student's state: 'not_started' (nothing recorded), 'recording'
+        (some sentences recorded), 'generating' (submitted, AI clone being made), 'ready'
+        (can listen to everything) or 'failed' (an AI clone could not be made)."""
         sentence_count = self.active_sentence_count()
         out: dict[str, dict] = {}
         for p in self.list_participants():
             if not p["active"]:
                 continue
+            if not p["submitted_at"]:
+                state = "recording" if p["recorded"] else "not_started"
+            elif p["clip_failed"]:
+                state = "failed"
+            elif sentence_count and p["clip_done"] >= sentence_count:
+                state = "ready"
+            else:
+                state = "generating"
             c = out.setdefault(p["class_name"], {
-                "class_name": p["class_name"], "phase": self.phase_for(p["class_name"]),
-                "total": 0, "submitted": 0, "ai_ready": 0, "not_submitted": [], "ai_waiting": [],
+                "class_name": p["class_name"], "total": 0,
+                "counts": {k: 0 for k in ("not_started", "recording", "generating", "ready", "failed")},
+                "students": [],
             })
             c["total"] += 1
-            if p["submitted_at"]:
-                c["submitted"] += 1
-            else:
-                c["not_submitted"].append(p["id"])
-            if p["submitted_at"] and sentence_count and p["clip_done"] >= sentence_count:
-                c["ai_ready"] += 1
-            elif p["submitted_at"]:
-                c["ai_waiting"].append(p["id"])
+            c["counts"][state] += 1
+            c["students"].append({"id": p["id"], "state": state, "recorded": p["recorded"],
+                                  "clip_done": p["clip_done"]})
         return list(out.values())
 
     def delete_participant(self, pid: str) -> None:

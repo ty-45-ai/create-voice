@@ -194,3 +194,17 @@ tr.inactive td { opacity: 0.55; }
 .voice-play:disabled { background: var(--line); border-color: var(--line); color: var(--muted); }
 #standard-alert { border-color: var(--bad); }
 .fail-row { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid var(--line); justify-items: start; }
+
+/* admin progress: one chip per student, coloured by state */
+.legend, .class-counts { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.class-progress { padding: 14px 0; border-top: 1px solid var(--line); }
+.class-progress h3 { margin: 0 0 4px; font-size: 1.05em; }
+.students { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 0.85em; border: 1px solid var(--line); white-space: nowrap; }
+.chip.student { font-family: ui-monospace, Menlo, Consolas, monospace; }
+.chip small { color: inherit; opacity: 0.75; }
+.chip.not_started { background: var(--bg); color: var(--muted); }
+.chip.recording { background: #fff4d6; border-color: #e8c66a; color: #6b4e00; }
+.chip.generating { background: var(--soft-blue); border-color: #9bbcf5; color: #1c4fae; }
+.chip.ready { background: #e3f4ea; border-color: #8fd0aa; color: var(--good); }
+.chip.failed { background: #fdecea; border-color: #f0a39b; color: var(--bad); }

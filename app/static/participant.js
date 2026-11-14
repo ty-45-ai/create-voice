@@ -1,7 +1,7 @@
 import { Recorder, decodeFile, micSupported, prepareVoice } from "./audio.js";
 
 const $ = (id) => document.getElementById(id);
-const VIEWS = ["view-login", "view-record", "view-submitted", "view-listen", "view-closed"];
+const VIEWS = ["view-login", "view-record", "view-listen"];
 let me = null;
 let pollTimer = null;
 let currentPlayer = null;
@@ -84,9 +84,7 @@ async function load() {
 
 function render() {
   clearTimeout(pollTimer);
-  if (me.phase === "closed") return show("view-closed");
   if (me.phase === "listen") return renderListen();
-  if (me.submitted) return show("view-submitted");
   return renderRecord();
 }
 

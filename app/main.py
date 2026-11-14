@@ -83,15 +83,9 @@ class ApproveBody(BaseModel):
     approved: bool
 
 
-class PhaseBody(BaseModel):
-    class_name: str | None = Field(default=None, max_length=64)  # None = default for every class
-    phase: Literal["record", "listen", "closed"]
-
-
 class SettingsBody(BaseModel):
     require_approval: bool | None = None
     allow_controls: bool | None = None
-    listen_after_submit: bool | None = None
     survey_url: str | None = Field(default=None, max_length=2000)
     # Stock voice per language ("" = let the engine choose one that speaks it).
     standard_voices: dict[Literal["en", "ja"], str] | None = None
@@ -240,10 +234,6 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         host = request.client.host if request.client else "?"
         return f"{host}|{name}"
 
-    def require_phase(p, phase: str) -> None:
-        if store.phase_for(p["class_name"]) != phase:
-            raise HTTPException(409, "今はこの操作はできません。画面を読み込み直してください")
-
     def active_sentence(sid: int):
         s = store.get_sentence(sid)
         if s is None or not s["active"]:
@@ -298,30 +288,29 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
 
     @app.get("/api/me")
     def me(p=Depends(participant)):
-        phase = store.effective_phase(p)
+        phase = store.phase_of(p)
         items = []
-        if phase != "closed":
-            for it in items_with_paths(p):
-                sid = it["sentence_id"]
-                recorded = it["recorded_seconds"] is not None
-                entry = {
-                    "sentence_id": sid,
-                    "text": it["text"],
-                    "lang": it["lang"],
-                    "recorded": recorded,
-                    "own_url": f"/api/recordings/{sid}/audio?v={int(it['recorded_at'])}" if recorded else None,
-                }
-                if phase == "listen":
-                    entry["audios"] = [
-                        {
-                            "kind": k,
-                            "label": AUDIO_LABELS[k],
-                            "url": (entry["own_url"] if k == "own" else f"/api/model/{sid}/{k}")
-                            if audio_path(store, it, k) else None,
-                        }
-                        for k in AUDIO_KINDS
-                    ]
-                items.append(entry)
+        for it in items_with_paths(p):
+            sid = it["sentence_id"]
+            recorded = it["recorded_seconds"] is not None
+            entry = {
+                "sentence_id": sid,
+                "text": it["text"],
+                "lang": it["lang"],
+                "recorded": recorded,
+                "own_url": f"/api/recordings/{sid}/audio?v={int(it['recorded_at'])}" if recorded else None,
+            }
+            if phase == "listen":
+                entry["audios"] = [
+                    {
+                        "kind": k,
+                        "label": AUDIO_LABELS[k],
+                        "url": (entry["own_url"] if k == "own" else f"/api/model/{sid}/{k}")
+                        if audio_path(store, it, k) else None,
+                    }
+                    for k in AUDIO_KINDS
+                ]
+            items.append(entry)
         survey = store.get_setting("survey_url") or ""
         return {
             "id": p["id"],
@@ -334,7 +323,6 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
 
     @app.post("/api/recordings/{sid}")
     async def upload_recording(sid: int, file: UploadFile = File(...), p=Depends(participant)):
-        require_phase(p, "record")
         if p["submitted_at"]:
             raise HTTPException(409, "提出済みのため録り直せません。先生に連絡してください")
         active_sentence(sid)
@@ -353,7 +341,8 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
 
     @app.post("/api/submit")
     def submit(p=Depends(participant)):
-        require_phase(p, "record")
+        if p["submitted_at"]:
+            raise HTTPException(409, "すでに提出しています。画面を読み込み直してください")
         items = store.items_for(p["id"])
         missing = [i for i in items if i["recorded_seconds"] is None]
         if not items or missing:
@@ -367,8 +356,8 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
 
     @app.get("/api/model/{sid}/{kind}")
     def model_voice(sid: int, kind: str, p=Depends(participant)):
-        if store.effective_phase(p) != "listen":
-            raise HTTPException(409, "今はこの操作はできません。画面を読み込み直してください")
+        if store.phase_of(p) != "listen":
+            raise HTTPException(409, "提出すると聞けるようになります")
         if kind not in AUDIO_KINDS or kind == "own":
             raise HTTPException(404, "音声がありません")
         item = next((i for i in items_with_paths(p) if i["sentence_id"] == sid), None)
@@ -410,9 +399,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
             "require_approval": store.require_approval(),
             "allow_controls": store.flag("allow_controls"),
             "survey_url": store.get_setting("survey_url") or "",
-            "default_phase": store.get_setting("phase") or "record",
             "sentence_count": store.active_sentence_count(),
-            "listen_after_submit": store.flag("listen_after_submit"),
             "standard_voice": {lang: store.standard_voice(lang) for lang in LANGS},
             "standard_voice_default": {lang: worker.default_standard_voice(lang) for lang in LANGS},
             "standard_voices": worker.standard_voices(),
@@ -425,11 +412,6 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
     @app.get("/api/admin/progress")
     def progress(_=Depends(admin)):
         return store.progress()
-
-    @app.put("/api/admin/phase")
-    def set_phase(body: PhaseBody, _=Depends(admin)):
-        store.set_phase(body.class_name, body.phase)
-        return {"ok": True}
 
     # participants
 
@@ -626,8 +608,6 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
             store.set_setting("require_approval", "1" if body.require_approval else "0")
         if body.allow_controls is not None:
             store.set_setting("allow_controls", "1" if body.allow_controls else "0")
-        if body.listen_after_submit is not None:
-            store.set_setting("listen_after_submit", "1" if body.listen_after_submit else "0")
         for lang, voice in (body.standard_voices or {}).items():
             voice = voice.strip()[:100]
             if voice != store.standard_voice(lang):

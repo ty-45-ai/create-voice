@@ -24,7 +24,7 @@
 
     <section id="app" class="hidden">
       <nav class="tabs" id="tabs">
-        <button data-tab="progress" class="on" type="button">進捗・段階</button>
+        <button data-tab="progress" class="on" type="button">進捗</button>
         <button data-tab="participants" type="button">参加者</button>
         <button data-tab="sentences" type="button">教材</button>
         <button data-tab="clips" type="button">AI音声</button>
@@ -32,21 +32,19 @@
       </nav>
       <audio id="admin-audio" controls class="hidden"></audio>
 
-      <!-- 進捗・段階 -->
+      <!-- 進捗 -->
       <div id="tab-progress" class="tab">
         <div class="card">
-          <h2>クラス別の進捗と段階</h2>
-          <p class="small">段階：<b>録音</b>＝家で教材を録音して提出 ／ <b>聴取</b>＝自分の声 → AI音声（クローン） → AI音声（標準）の順に聞く ／ <b>停止</b>＝利用不可。クラスごとに切り替えられます。</p>
-          <div class="inline-form" style="margin-bottom:12px">
-            <label>まだ参加者がいないクラスも含めた既定の段階
-              <select id="default-phase">
-                <option value="record">録音</option>
-                <option value="listen">聴取</option>
-                <option value="closed">停止</option>
-              </select>
-            </label>
+          <h2>生徒の進み具合</h2>
+          <p class="small">生徒は録音してすべて提出すると、AI音声ができしだい ① 自分の声 → ② AI音声（クローン） → ③ AI音声（標準）を聞けます。10秒ごとに自動で更新されます。</p>
+          <div class="legend">
+            <span class="chip not_started">未録音</span>
+            <span class="chip recording">録音中</span>
+            <span class="chip generating">AI音声を作成中</span>
+            <span class="chip ready">聞ける</span>
+            <span class="chip failed">AI音声の失敗</span>
           </div>
-          <div class="table-wrap"><table id="progress-table"></table></div>
+          <div id="progress-classes"></div>
         </div>
         <div id="standard-alert" class="card hidden"></div>
         <div class="card stats" id="stats"></div>
@@ -152,7 +150,6 @@
         </div>
         <div class="card">
           <h2>聴取画面の設定</h2>
-          <label class="check-row"><input id="listen-after-submit" type="checkbox"> 提出したらすぐに聞けるようにする（オフにすると、クラスを「聴取」に切り替えるまで聞けません。研究1の学校での聴取ではオフ）</label>
           <label class="check-row"><input id="allow-controls" type="checkbox"> 生徒が速さ（0.5〜2.0倍）とくり返しを変えられるようにする</label>
           <label class="check-row"><input id="require-approval" type="checkbox"> AI音声は研究者が承認してから生徒に公開する</label>
           <label>練習後アンケートのURL（空欄なら表示しない。<code>{id}</code> は参加者IDに置き換わります）

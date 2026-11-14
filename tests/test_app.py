@@ -62,7 +62,6 @@ def setup_study(admin, n=2):
 def test_home_record_then_school_listen(env):
     app, admin, client = env
     kids = setup_study(admin, n=2)
-    admin.put("/api/admin/settings", json={"listen_after_submit": False})  # study 1: listen at school
     k1, k2 = client(), client()
     login(k1, kids[0])
     login(k2, kids[1])
@@ -79,16 +78,16 @@ def test_home_record_then_school_listen(env):
     sid = me["items"][0]["sentence_id"]
     assert k1.post(f"/api/recordings/{sid}", files={"file": ("v.wav", make_wav(), "audio/wav")}).status_code == 409
 
-    # Only students who submitted get AI clones.
+    # Only students who submitted get AI clones; the others cannot reach AI audio yet.
     clips = admin.get("/api/admin/clips").json()
     assert {c["participant_id"] for c in clips} == {kids[0]["id"]} and len(clips) == 2
+    assert k2.get(f"/api/model/{sid}/ai_self").status_code == 409
+    progress = admin.get("/api/admin/progress").json()[0]
+    assert progress["counts"]["generating"] == 1 and progress["counts"]["not_started"] == 1
     drain(app)
     progress = admin.get("/api/admin/progress").json()[0]
-    assert progress["submitted"] == 1 and progress["ai_ready"] == 1 and progress["not_submitted"] == [kids[1]["id"]]
-
-    # AI audio is not reachable until the class moves to the listening stage.
-    assert k1.get(f"/api/model/{sid}/ai_self").status_code == 409
-    admin.put("/api/admin/phase", json={"class_name": "3-1", "phase": "listen"})
+    assert [(st["id"], st["state"]) for st in progress["students"]] == [
+        (kids[0]["id"], "ready"), (kids[1]["id"], "not_started")]
 
     me = k1.get("/api/me").json()
     assert me["phase"] == "listen"
@@ -102,27 +101,31 @@ def test_home_record_then_school_listen(env):
         r = k1.get(a["url"])
         assert r.status_code == 200 and r.content[:4] == b"RIFF"
     assert k1.get(f"/api/model/{sid}/native").status_code == 404
-    # The student who has not submitted has no clone yet.
-    assert k2.get("/api/me").json()["items"][0]["audios"][1]["url"] is None
+    # The student who has not submitted is still recording.
+    me2 = k2.get("/api/me").json()
+    assert me2["phase"] == "record" and "audios" not in me2["items"][0]
+    record_all(k2, me2)
+    progress = admin.get("/api/admin/progress").json()[0]
+    assert progress["counts"]["recording"] == 1
 
     k1.post("/api/events", json={"type": "play_ai_self", "sentence_id": sid, "detail": "rate=1.5;repeat=3"})
     log = admin.get("/api/admin/events.csv").text
     assert "play_ai_self" in log and "submit" in log and "rate=1.5;repeat=3" in log
 
 
-def test_phase_per_class_and_closed(env):
+def test_cannot_submit_twice_or_record_after_submitting(env):
     app, admin, client = env
-    admin.post("/api/admin/sentences", json={"text": "Hello."})
-    a = admin.post("/api/admin/participants", json={"count": 1, "prefix": "A", "class_name": "3-1"}).json()[0]
-    b = admin.post("/api/admin/participants", json={"count": 1, "prefix": "B", "class_name": "3-2"}).json()[0]
-    admin.put("/api/admin/phase", json={"class_name": "3-2", "phase": "closed"})
-    ka, kb = client(), client()
-    login(ka, a)
-    login(kb, b)
-    assert ka.get("/api/me").json()["phase"] == "record"
-    me_b = kb.get("/api/me").json()
-    assert me_b["phase"] == "closed" and me_b["items"] == []
-    assert kb.post("/api/submit").status_code == 409
+    admin.post("/api/admin/sentences", json={"text": "Hello there, how are you today?"})
+    (a,) = admin.post("/api/admin/participants", json={"count": 1}).json()
+    k = client()
+    login(k, a)
+    sid = k.get("/api/me").json()["items"][0]["sentence_id"]
+    upload = lambda: k.post(f"/api/recordings/{sid}", files={"file": ("v.wav", make_wav(4.0), "audio/wav")})
+    assert upload().status_code == 200
+    assert k.post("/api/submit").status_code == 200
+    assert k.post("/api/submit").status_code == 409
+    assert upload().status_code == 409
+    assert k.get("/api/me").json()["phase"] == "listen"
 
 
 def test_privacy_between_students(env):
@@ -147,7 +150,6 @@ def test_approval_and_controls_settings(env):
     record_all(kid)
     kid.post("/api/submit")
     drain(app)
-    admin.put("/api/admin/phase", json={"class_name": None, "phase": "listen"})
     me = kid.get("/api/me").json()
     assert me["allow_controls"] is False
     assert me["survey_url"] == f"https://forms.example/?id={ai[0]['id']}"
@@ -292,13 +294,12 @@ def test_trim_tail_cuts_babble_after_the_sentence():
 def test_listen_right_after_submit_and_stock_voice_per_language(env):
     app, admin, client = env
     ai = setup_study(admin, n=1)
-    assert admin.put("/api/admin/settings", json={"listen_after_submit": True}).status_code == 200
     kid = client()
     login(kid, ai[0])
     record_all(kid)
     kid.post("/api/submit")
     me = kid.get("/api/me").json()
-    assert me["phase"] == "listen"  # no need to wait for the class to switch
+    assert me["phase"] == "listen"  # listening starts as soon as the student submits
     audios = me["items"][0]["audios"]
     assert audios[0]["url"] and audios[1]["url"] is None and audios[2]["url"] is None
 
