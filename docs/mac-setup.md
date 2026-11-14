@@ -88,7 +88,8 @@ ls
 
 `README.md` `app` `start-mac.command` などのファイル名が表示されれば成功です。
 
-- `Repository not found` と表示される場合は、リポジトリが非公開になっています。リポジトリの管理者に、GitHub のアクセス権を依頼してください。
+- リポジトリが非公開の場合は、`Username` と `Password` を聞かれます。`Username` には `ty-45-ai`、`Password` には管理者から受け取ったアクセストークン（`github_pat_` で始まる文字列。貼り付けても画面には表示されません）を入力します。次回からは Mac が覚えています。
+- `Repository not found` や `Authentication failed` と表示される場合は、トークンの入力間違いか、トークンの期限切れです。管理者に確認してください。
 - 毎回開きやすいように、Finder でホームフォルダを開き、`create-voice` フォルダを左のサイドバーの「よく使う項目」へドラッグしておくと便利です。
 
 ## 5. アプリを起動する
