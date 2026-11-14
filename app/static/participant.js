@@ -324,16 +324,20 @@ function roundLabel(round, settings) {
   return settings.repeat === 0 ? `${round}回目` : `${round} / ${settings.repeat}`;
 }
 
+// The speed slider puts 1.0 in the middle: the left half covers 0.5-1.0, the right half 1.0-2.0.
+const sliderToRate = (pos) => (pos <= 50 ? 0.5 + (pos / 50) * 0.5 : 1 + (pos - 50) / 50);
+const rateToSlider = (rate) => (rate <= 1 ? ((rate - 0.5) / 0.5) * 50 : 50 + (rate - 1) * 50);
+
 function setupPlayerSettings(node, settings) {
   const slider = node.querySelector(".rate");
   const value = node.querySelector(".rate-value");
   const apply = (rate) => {
     settings.rate = Math.round(rate * 10) / 10;
-    slider.value = String(settings.rate);
+    slider.value = String(rateToSlider(settings.rate));
     value.textContent = `${settings.rate.toFixed(1)} 倍`;
     if (currentPlayer && currentPlayer.owner === node) currentPlayer.setRate(settings.rate);
   };
-  slider.addEventListener("input", () => apply(Number(slider.value)));
+  slider.addEventListener("input", () => apply(sliderToRate(Number(slider.value))));
   node.querySelector(".rate-reset").addEventListener("click", () => apply(1));
   node.querySelectorAll(".repeat button").forEach((b) => {
     b.addEventListener("click", () => {
