@@ -77,10 +77,10 @@ Voicebox は、Mac の中だけで動く無料の音声AIアプリです（オ�
 
 ## 4. このアプリを取得する（初回のみ）
 
-ターミナルで、次を1行ずつ入力します。アプリは「書類」フォルダの中の `create-voice` フォルダに入ります。
+ターミナルで、次を1行ずつ入力します。アプリは**ホームフォルダ**（Finder のメニュー「移動」→「ホーム」で開くフォルダ。家のマークと自分の名前）の中の `create-voice` フォルダに入ります。「書類」や「デスクトップ」は iCloud と同期していることが多く、録音がクラウドに上がってしまうため使いません。
 
 ```bash
-cd ~/Documents
+cd ~
 git clone https://github.com/ty-45-ai/create-voice.git
 cd create-voice
 ls
@@ -89,20 +89,20 @@ ls
 `README.md` `app` `start-mac.command` などのファイル名が表示されれば成功です。
 
 - `Repository not found` と表示される場合は、リポジトリが非公開になっています。リポジトリの管理者に、GitHub のアクセス権を依頼してください。
-- 「書類」フォルダが iCloud Drive と同期する設定になっている場合は、録音データがクラウドに上がらないように、かわりに `cd ~` と入力して、ホームフォルダに置いてください。
+- 毎回開きやすいように、Finder でホームフォルダを開き、`create-voice` フォルダを左のサイドバーの「よく使う項目」へドラッグしておくと便利です。
 
 ## 5. アプリを起動する
 
-Finder で `create-voice` フォルダを開き、**`start-mac.command` をダブルクリック**します。
+Finder でホームフォルダの `create-voice` フォルダを開き、**`start-mac.command` をダブルクリック**します。
 
 - ターミナルの画面が開き、初回だけ部品のインストールに数分かかります。
 - 終わるとブラウザで管理画面（http://127.0.0.1:8000/admin）が自動で開きます。開かない場合は、このアドレスを自分で開いてください。
-- 「開発元を確認できない」と出た場合は、`start-mac.command` を右クリック（または `control` キーを押しながらクリック）→「開く」→「開く」と選びます。それでも開けない場合は、ターミナルで `cd ~/Documents/create-voice` と入力したあと `./start-mac.command` と入力して起動します。
+- 「開発元を確認できない」と出た場合は、`start-mac.command` を右クリック（または `control` キーを押しながらクリック）→「開く」→「開く」と選びます。それでも開けない場合は、ターミナルで `cd ~/create-voice` と入力したあと `./start-mac.command` と入力して起動します。
 
 ターミナルで起動する場合（ダブルクリックと同じです）：
 
 ```bash
-cd ~/Documents/create-voice
+cd ~/create-voice
 ./start-mac.command
 ```
 
@@ -115,7 +115,7 @@ cd ~/Documents/create-voice
 自分で決めたパスワードにする場合は、次のようにします。
 
 ```bash
-cd ~/Documents/create-voice
+cd ~/create-voice
 open -e .env
 ```
 
@@ -138,14 +138,13 @@ open -e .env
 
 1. アプリを止めます（ターミナルの画面で `control + C`）。
 2. `update-mac.command` をダブルクリックします。
-3. 「Updated.」と表示されたら、`start-mac.command` で起動し直します。
+3. 「更新が完了しました」と表示されたら、`start-mac.command` で起動し直します。
 
 ターミナルで行う場合：
 
 ```bash
-cd ~/Documents/create-voice
+cd ~/create-voice
 git pull
-.venv/bin/python -m pip install -r requirements.txt
 ```
 
 録音や設定（`data` フォルダと `.env`）は、更新しても消えません。
@@ -180,7 +179,9 @@ cloudflared tunnel --url http://127.0.0.1:8000
 | `Address already in use` | アプリがすでに起動しています。もう一つのターミナルの画面を閉じてから起動し直す |
 | 管理画面に「Voicebox に接続できません」 | Voicebox を起動してから、アプリを起動し直す |
 | AI音声が「失敗」になる | Voicebox を開いてモデルのダウンロードが終わっているか確認し、「AI音声」タブの「失敗をすべて再生成」を押す |
-| 部品のインストールで失敗した | `create-voice` の中の `.venv` フォルダを削除して、`start-mac.command` を起動し直す |
+| 部品のインストールで失敗した | インターネット接続を確認して、もう一度 `start-mac.command` を起動する（途中で失敗した場合は自動で最初から入れ直します） |
+| 「Python 3.10 以上が見つかりません」 | 手順2で Python 3.13 を入れ、ターミナルを開き直してから起動する |
+| 更新で「最新版を取得できませんでした」 | インターネット接続と、GitHub のアクセストークンの有効期限を確認する |
 | 録音ボタンを押しても録音できない | ブラウザのマイクの許可を確認する（Safari：「設定」→「Webサイト」→「マイク」／ Chrome：アドレスバー左のアイコン）。Mac の「システム設定」→「プライバシーとセキュリティ」→「マイク」で、使っているブラウザがオンになっているかも確認する |
 
 画面の写真（スクリーンショット：`command + shift + 4`）を管理者に送ると、原因を調べやすくなります。
