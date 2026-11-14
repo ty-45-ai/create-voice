@@ -6,7 +6,7 @@
 - 音声の生成は**管理者のMac（またはPC）の中だけ**で行い、外部のAIサービスには音声も文章も送りません。
 - 生成には、PCの中だけで動く無料の音声AIアプリ **Voicebox**（クローンは Qwen3-TTS、標準AI音声は Kokoro）を使います。
 
-> **Mac での導入手順**：Python・Git・Voicebox の入れ方から起動・更新までの全手順を [docs/mac-setup.md](docs/mac-setup.md) にまとめています。
+> **Mac 導入・操作マニュアル**：Python・Git・Voicebox の入れ方、起動・更新、管理画面と生徒画面の使い方、困ったときの対処まで [docs/mac-setup.md](docs/mac-setup.md) にまとめています。
 
 ```
 参加者のブラウザ                       管理者のMac（このアプリ）
