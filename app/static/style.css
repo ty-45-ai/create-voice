@@ -171,7 +171,7 @@ tr.inactive td { opacity: 0.55; }
 #listen-matrix td:first-child { text-align: left; }
 
 /* practice passages keep their line breaks */
-.item .text, td.pre { white-space: pre-wrap; }
+.item .text, td.pre, div.pre { white-space: pre-wrap; }
 
 /* listening: one row per sound */
 .voice-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 10px; }
@@ -216,3 +216,11 @@ tr.inactive td { opacity: 0.55; }
 .stats .stat.failed { border-left-color: #f0a39b; }
 .stats .stat small { font-size: 0.5em; font-weight: 400; color: var(--muted); }
 h3.sub { margin: 12px 0 0; font-size: 0.95em; color: var(--muted); }
+
+/* a material shown as "教材1" with a one-line excerpt; click to read it all */
+.ref-cell { max-width: 520px; }
+.sentence-ref summary { cursor: pointer; display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.sentence-ref .excerpt { color: var(--muted); font-size: 0.85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.sentence-ref[open] .excerpt { display: none; }
+.sentence-ref > div { margin-top: 6px; font-size: 0.9em; }
+.nowrap { white-space: nowrap; }

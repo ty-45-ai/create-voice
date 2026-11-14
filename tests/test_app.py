@@ -400,6 +400,8 @@ def test_passwords_can_be_looked_up_changed_and_exported(env):
     assert bad.status_code == 400 and "パスワード" in bad.text
     csv_text = admin.get("/api/admin/participants.csv").text
     assert "password" in csv_text and "hikari7" in csv_text and new in csv_text
+    # Class names like 2-2 are written so that Excel keeps them as text, not a date.
+    assert '"=""2-2"""' in csv_text
 
 
 def test_fill_missing_passwords_for_students_made_before(env):

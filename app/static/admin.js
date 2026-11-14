@@ -92,6 +92,11 @@ function preview(url) {
   adminAudio.play();
 }
 
+// Excel turns "2-1" into a date and "4e25" into a number; ="2-1" makes it keep the text as typed.
+function excelText(v) {
+  return `="${String(v).replaceAll('"', '""')}"`;
+}
+
 function downloadCsv(name, rows) {
   const csv = "﻿" + rows.map((r) => r.map((v) => `"${String(v).replaceAll('"', '""')}"`).join(",")).join("\r\n");
   const a = h("a", { href: URL.createObjectURL(new Blob([csv], { type: "text/csv" })), download: name });
@@ -217,7 +222,7 @@ $("created-csv").addEventListener("click", () => {
 // ID, password, class and the address to open, for handing out to students.
 function passwordRows(list) {
   return [["ID", "パスワード", "クラス", "アドレス"],
-    ...list.map((p) => [p.id, p.passcode || "", p.class_name, location.origin + "/"])];
+    ...list.map((p) => [excelText(p.id), excelText(p.passcode || ""), excelText(p.class_name), location.origin + "/"])];
 }
 
 let participantRows = [];
@@ -281,14 +286,14 @@ async function loadParticipants() {
 }
 
 async function showRecordings(p) {
-  const rows = await api(`/api/admin/participants/${p.id}/recordings`);
+  const [rows] = await Promise.all([api(`/api/admin/participants/${p.id}/recordings`), loadSentenceIndex()]);
   $("recordings-card").classList.remove("hidden");
   $("recordings-title").textContent = `${p.id} の録音`;
   $("recordings-table").replaceChildren(
-    h("tr", {}, ["文", "長さ", ""].map((t) => h("th", {}, t))),
+    h("tr", {}, ["教材", "長さ", ""].map((t) => h("th", {}, t))),
     ...rows.map((r) =>
       h("tr", {},
-        h("td", {}, r.text),
+        h("td", { class: "ref-cell" }, sentenceRef(r.sentence_id, r.text)),
         h("td", { class: "num" }, r.seconds != null ? `${r.seconds.toFixed(1)}秒` : "未録音"),
         h("td", {}, r.url ? h("button", { onclick: () => preview(r.url) }, "試聴") : ""),
       ),
@@ -378,10 +383,10 @@ async function loadSentences() {
   const rows = await api("/api/admin/sentences");
   const table = $("sentences-table");
   table.replaceChildren(
-    h("tr", {}, ["順番", "文", "言語", "AI音声（標準）", "公開", "操作"].map((t) => h("th", {}, t))),
-    ...rows.map((s) =>
+    h("tr", {}, ["教材", "文章", "言語", "AI音声（標準）", "公開", "操作"].map((t) => h("th", {}, t))),
+    ...rows.map((s, i) =>
       h("tr", { class: s.active ? "" : "inactive" },
-        h("td", { class: "num" }, s.sort_order),
+        h("td", { class: "nowrap" }, h("b", {}, `教材${i + 1}`), h("div", { class: "small" }, `順番 ${s.sort_order}`)),
         h("td", { lang: s.lang, class: "pre" }, s.text),
         h("td", {}, LANG_LABEL[s.lang] || s.lang),
         h("td", {},
@@ -442,11 +447,36 @@ async function deleteSentence(s) {
   loadSentences();
 }
 
+// ---- materials shown by number ----
+
+// Long passages make tables hard to read, so other tabs show "教材1" and open the text on click.
+let sentenceNo = new Map(); // sentence id -> { no, text, lang }
+
+async function loadSentenceIndex() {
+  const rows = await api("/api/admin/sentences");
+  sentenceNo = new Map(rows.map((s, i) => [s.id, { no: i + 1, text: s.text, lang: s.lang }]));
+  return rows;
+}
+
+function sentenceLabel(id) {
+  const s = sentenceNo.get(id);
+  return s ? `教材${s.no}` : "教材";
+}
+
+function sentenceRef(id, fallbackText = "") {
+  const s = sentenceNo.get(id);
+  const text = s ? s.text : fallbackText;
+  return h("details", { class: "sentence-ref" },
+    h("summary", {}, h("b", {}, sentenceLabel(id)), h("span", { class: "excerpt", lang: s && s.lang }, text)),
+    h("div", { class: "pre", lang: s && s.lang }, text));
+}
+
 // ---- AI clips ----
 
 $("clip-reload").addEventListener("click", loadClips);
 $("clip-participant").addEventListener("change", loadClips);
 $("clip-status").addEventListener("change", loadClips);
+$("clip-sentence").addEventListener("change", loadClips);
 $("clip-retry-failed").addEventListener("click", async () => {
   const r = await api("/api/admin/clips/regenerate-failed", { method: "POST" });
   alert(`${r.count} 件を再生成の待機列に追加しました。`);
@@ -467,16 +497,24 @@ async function loadClips() {
   const params = new URLSearchParams();
   if ($("clip-participant").value) params.set("participant_id", $("clip-participant").value);
   if ($("clip-status").value) params.set("status", $("clip-status").value);
-  const rows = await api(`/api/admin/clips?${params}`);
+  await loadSentenceIndex();
+  const pick = $("clip-sentence");
+  const keep = pick.value;
+  pick.replaceChildren(h("option", { value: "" }, "すべて"),
+    ...[...sentenceNo].map(([id, s]) => h("option", { value: id }, `教材${s.no}`)));
+  pick.value = keep;
+  let rows = await api(`/api/admin/clips?${params}`);
+  if (pick.value) rows = rows.filter((c) => String(c.sentence_id) === pick.value);
   const needApproval = status.require_approval;
   const table = $("clips-table");
   table.replaceChildren(
-    h("tr", {}, ["参加者", "クラス", "文", "状態", "長さ", "更新", needApproval ? "承認" : null, "操作"].filter(Boolean).map((t) => h("th", {}, t))),
+    h("tr", {}, ["参加者", "クラス", "教材", "状態", "長さ", "更新", needApproval ? "承認" : null, "操作"].filter(Boolean).map((t) => h("th", {}, t))),
     ...rows.map((c) =>
       h("tr", {},
         h("td", { class: "mono" }, c.participant_id),
         h("td", {}, c.class_name),
-        h("td", { lang: c.lang }, c.text, c.error ? h("div", { class: "err-text" }, c.error.split("\n")[0]) : ""),
+        h("td", { class: "ref-cell" }, sentenceRef(c.sentence_id, c.text),
+          c.error ? h("div", { class: "err-text" }, c.error.split("\n")[0]) : ""),
         h("td", {}, h("span", { class: `badge ${c.status}` }, STATUS_LABEL[c.status] || c.status)),
         h("td", { class: "num" }, c.seconds ? `${c.seconds.toFixed(1)}秒` : ""),
         h("td", { class: "small" }, c.updated_at),

@@ -135,6 +135,12 @@ def fmt_time(ts: float | None) -> str:
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else ""
 
 
+def excel_text(value) -> str:
+    """Excel reads "2-1" as a date and "4e25" as a number; ="2-1" keeps the text as typed."""
+    text = str(value or "")
+    return '="' + text.replace('"', '""') + '"' if text else ""
+
+
 def csv_response(rows: list[list], name: str) -> StreamingResponse:
     buf = io.StringIO()
     buf.write("﻿")  # BOM so Excel opens Japanese text correctly
@@ -660,7 +666,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         rows = [["event_id", "datetime", "participant_id", "class", "type",
                  "sentence_id", "sentence_text", "detail"]]
         for e in store.list_events():
-            rows.append([e["id"], fmt_time(e["created_at"]), e["participant_id"], e["class_name"] or "",
+            rows.append([e["id"], fmt_time(e["created_at"]), excel_text(e["participant_id"]), excel_text(e["class_name"]),
                          e["type"], e["sentence_id"] or "", e["text"] or "", e["detail"]])
         return csv_response(rows, f"ondoku-events-{time.strftime('%Y%m%d-%H%M')}.csv")
 
@@ -670,7 +676,8 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         rows = [["participant_id", "password", "class", "active", "recorded", "sentences",
                  "submitted_at", "ai_clips_done", "last_activity"]]
         for p in store.list_participants():
-            rows.append([p["id"], p["passcode"] or "", p["class_name"], p["active"], p["recorded"], n,
+            rows.append([excel_text(p["id"]), excel_text(p["passcode"]), excel_text(p["class_name"]),
+                         p["active"], p["recorded"], n,
                          fmt_time(p["submitted_at"]), p["clip_done"],
                          fmt_time(p["last_activity"])])
         return csv_response(rows, f"ondoku-participants-{time.strftime('%Y%m%d-%H%M')}.csv")
