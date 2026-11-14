@@ -77,6 +77,14 @@
             <label class="check-row" style="margin:0"><input id="show-passwords" type="checkbox"> パスワードを表示する</label>
             <button id="passwords-csv" type="button">ID・パスワード一覧をCSVで保存</button>
           </div>
+          <div class="row bulk-bar" style="justify-content:flex-start;margin-bottom:10px">
+            <label>クラス単位で選択
+              <select id="select-class"><option value="">—</option></select>
+            </label>
+            <button id="clear-selection" type="button">選択を解除</button>
+            <button id="bulk-delete" class="danger" type="button" disabled>選択した参加者を削除</button>
+            <span id="selection-count" class="small"></span>
+          </div>
           <div id="missing-passwords" class="notice warn hidden">
             <span id="missing-passwords-text"></span>
             <button id="fill-passwords" type="button">一括で新しいパスワードを発行</button>

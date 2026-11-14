@@ -63,6 +63,10 @@ class PasswordBody(BaseModel):
     password: str | None = Field(default=None, max_length=64)  # None or "" = make one
 
 
+class DeleteParticipantsBody(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=2000)
+
+
 class ImportParticipantsBody(BaseModel):
     csv: str = Field(max_length=200_000)
 
@@ -528,6 +532,18 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, engi
         store.delete_participant(pid)
         worker.forget_participant(pid)
         return {"ok": True}
+
+    @app.post("/api/admin/participants/delete")
+    def delete_participants(body: DeleteParticipantsBody, _=Depends(admin)):
+        """Delete several students at once, e.g. the trial accounts before the real study."""
+        deleted = []
+        for pid in dict.fromkeys(body.ids):
+            if store.get_participant(pid) is None:
+                continue
+            store.delete_participant(pid)
+            worker.forget_participant(pid)
+            deleted.append(pid)
+        return {"deleted": deleted}
 
     @app.get("/api/admin/participants/{pid}/recordings")
     def participant_recordings(pid: str, _=Depends(admin)):

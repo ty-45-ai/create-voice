@@ -418,3 +418,16 @@ def test_fill_missing_passwords_for_students_made_before(env):
     kid = client()
     assert kid.post("/api/login", json={"id": made[0]["id"], "passcode": filled[0]["passcode"]}).status_code == 200
     assert all(r["passcode"] for r in admin.get("/api/admin/participants").json())
+
+
+def test_bulk_delete_participants(env):
+    app, admin, client = env
+    trial = admin.post("/api/admin/participants", json={"count": 3, "class_name": "仮"}).json()
+    keep = admin.post("/api/admin/participants", json={"count": 1, "prefix": "S", "class_name": "2-1"}).json()
+    kid = client()
+    login(kid, trial[0])
+    ids = [p["id"] for p in trial] + ["NOPE"]
+    assert admin.post("/api/admin/participants/delete", json={"ids": ids}).json() == {"deleted": ids[:3]}
+    assert [r["id"] for r in admin.get("/api/admin/participants").json()] == [keep[0]["id"]]
+    assert kid.get("/api/me").status_code == 401
+    assert admin.post("/api/admin/participants/delete", json={"ids": []}).status_code == 422

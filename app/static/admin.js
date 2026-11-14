@@ -226,6 +226,43 @@ function passwordRows(list) {
 }
 
 let participantRows = [];
+const selected = new Set(); // participant ids ticked for bulk deletion
+
+function refreshSelection() {
+  document.querySelectorAll(".pick-participant").forEach((el) => (el.checked = selected.has(el.value)));
+  const all = $("pick-all");
+  if (all) {
+    all.checked = participantRows.length > 0 && selected.size === participantRows.length;
+    all.indeterminate = selected.size > 0 && selected.size < participantRows.length;
+  }
+  $("bulk-delete").disabled = !selected.size;
+  $("selection-count").textContent = selected.size ? `${selected.size}人を選択中` : "";
+}
+
+$("select-class").addEventListener("change", (e) => {
+  const cls = e.target.value;
+  e.target.value = "";
+  participantRows.filter((p) => (p.class_name || "（未設定）") === cls).forEach((p) => selected.add(p.id));
+  refreshSelection();
+});
+$("clear-selection").addEventListener("click", () => {
+  selected.clear();
+  refreshSelection();
+});
+$("bulk-delete").addEventListener("click", async () => {
+  const ids = [...selected];
+  const shown = ids.slice(0, 10).join("、") + (ids.length > 10 ? ` ほか${ids.length - 10}人` : "");
+  const typed = prompt(
+    `${ids.length}人（${shown}）の録音・AI音声・利用ログをすべて削除します。元に戻せません。\n`
+    + "確認のため「削除」と入力してください。");
+  if (typed === null) return;
+  if (typed.trim() !== "削除") return alert("入力が一致しないため、削除を中止しました。");
+  const r = await api("/api/admin/participants/delete", { json: { ids } });
+  selected.clear();
+  $("recordings-card").classList.add("hidden");
+  alert(`${r.deleted.length}人を削除しました。`);
+  loadParticipants();
+});
 $("show-passwords").addEventListener("change", () => loadParticipants());
 $("passwords-csv").addEventListener("click", () => {
   downloadCsv("id-password.csv", passwordRows(participantRows));
@@ -245,6 +282,10 @@ function passwordCell(p) {
 async function loadParticipants() {
   const [rows] = await Promise.all([api("/api/admin/participants"), loadStatus()]);
   participantRows = rows;
+  for (const id of [...selected]) if (!rows.some((p) => p.id === id)) selected.delete(id);
+  const classes = [...new Set(rows.map((p) => p.class_name || "（未設定）"))];
+  $("select-class").replaceChildren(h("option", { value: "" }, "—"),
+    ...classes.map((c) => h("option", { value: c }, `${c}（${rows.filter((p) => (p.class_name || "（未設定）") === c).length}人）`)));
   const missing = rows.filter((p) => !p.passcode).length;
   $("missing-passwords").classList.toggle("hidden", !missing);
   $("missing-passwords-text").textContent =
@@ -258,9 +299,21 @@ async function loadParticipants() {
 
   const table = $("participants-table");
   table.replaceChildren(
-    h("tr", {}, ["ID", "パスワード", "クラス", "録音", "提出", "AI音声（クローン）", "最終利用", "操作"].map((t) => h("th", {}, t))),
+    h("tr", {},
+      h("th", {}, h("input", { type: "checkbox", id: "pick-all", "aria-label": "すべて選択", onchange: (e) => {
+        if (e.target.checked) rows.forEach((p) => selected.add(p.id));
+        else selected.clear();
+        refreshSelection();
+      } })),
+      ...["ID", "パスワード", "クラス", "録音", "提出", "AI音声（クローン）", "最終利用", "操作"].map((t) => h("th", {}, t))),
     ...rows.map((p) =>
       h("tr", { class: p.active ? "" : "inactive" },
+        h("td", {}, h("input", { type: "checkbox", class: "pick-participant", value: p.id, "aria-label": `${p.id} を選択`,
+          onchange: (e) => {
+            if (e.target.checked) selected.add(p.id);
+            else selected.delete(p.id);
+            refreshSelection();
+          } })),
         h("td", { class: "mono" }, p.id, p.active ? "" : h("div", { class: "small" }, "停止中")),
         h("td", { class: "mono" }, passwordCell(p)),
         h("td", {}, p.class_name || "—"),
@@ -282,7 +335,8 @@ async function loadParticipants() {
       ),
     ),
   );
-  if (!rows.length) emptyRow(table, 8, "まだ参加者がいません。");
+  if (!rows.length) emptyRow(table, 9, "まだ参加者がいません。");
+  refreshSelection();
 }
 
 async function showRecordings(p) {

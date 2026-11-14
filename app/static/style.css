@@ -224,3 +224,8 @@ h3.sub { margin: 12px 0 0; font-size: 0.95em; color: var(--muted); }
 .sentence-ref[open] .excerpt { display: none; }
 .sentence-ref > div { margin-top: 6px; font-size: 0.9em; }
 .nowrap { white-space: nowrap; }
+
+/* bulk selection toolbar in the participant list */
+.bulk-bar { align-items: flex-end; gap: 10px; }
+.bulk-bar button { align-self: flex-end; }
+.bulk-bar #selection-count { align-self: center; }
